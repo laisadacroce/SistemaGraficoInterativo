@@ -4,39 +4,39 @@ from tkinter import ttk
 root = tk.Tk()
 root.title("Sistema Gráfico Interativo - INE5420")
 
-# ── Painel esquerdo ──────────────────────────────────────
+# ── Left panel ───────────────────────────────────────────
 panel = tk.Frame(root, width=200, bg="lightgray")
 panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
-# Seção: lista de objetos
-tk.Label(panel, text="Objetos", bg="lightgray", anchor="w").pack(fill=tk.X)
-listbox = tk.Listbox(panel, height=6)
-listbox.pack(fill=tk.X, pady=(0, 10))
+# Section: object list
+tk.Label(panel, text="Objects", bg="lightgray", anchor="w").pack(fill=tk.X)
+object_listbox = tk.Listbox(panel, height=6)
+object_listbox.pack(fill=tk.X, pady=(0, 10))
 
-# Seção: Window
+# Section: Window controls
 window_frame = tk.LabelFrame(panel, text="Window", bg="lightgray")
 window_frame.pack(fill=tk.X, pady=5)
 
-# Passo
-passo_frame = tk.Frame(window_frame, bg="lightgray")
-passo_frame.pack(fill=tk.X, padx=5, pady=2)
-tk.Label(passo_frame, text="Passo:", bg="lightgray").pack(side=tk.LEFT)
-passo_entry = tk.Entry(passo_frame, width=5)
-passo_entry.insert(0, "10")
-passo_entry.pack(side=tk.LEFT)
-tk.Label(passo_frame, text="%", bg="lightgray").pack(side=tk.LEFT)
+# Step size
+step_frame = tk.Frame(window_frame, bg="lightgray")
+step_frame.pack(fill=tk.X, padx=5, pady=2)
+tk.Label(step_frame, text="Step:", bg="lightgray").pack(side=tk.LEFT)
+step_entry = tk.Entry(step_frame, width=5)
+step_entry.insert(0, "10")
+step_entry.pack(side=tk.LEFT)
+tk.Label(step_frame, text="%", bg="lightgray").pack(side=tk.LEFT)
 
-# Botões de pan
+# Pan buttons
 tk.Button(window_frame, text="Up").pack(pady=1)
 
-lr_frame = tk.Frame(window_frame, bg="lightgray")
-lr_frame.pack()
-tk.Button(lr_frame, text="Left").pack(side=tk.LEFT, padx=2)
-tk.Button(lr_frame, text="Right").pack(side=tk.LEFT, padx=2)
+left_right_frame = tk.Frame(window_frame, bg="lightgray")
+left_right_frame.pack()
+tk.Button(left_right_frame, text="Left").pack(side=tk.LEFT, padx=2)
+tk.Button(left_right_frame, text="Right").pack(side=tk.LEFT, padx=2)
 
 tk.Button(window_frame, text="Down").pack(pady=1)
 
-# Botões de zoom
+# Zoom buttons
 zoom_frame = tk.Frame(window_frame, bg="lightgray")
 zoom_frame.pack(pady=5)
 tk.Label(zoom_frame, text="Zoom", bg="lightgray").pack(side=tk.LEFT, padx=5)
@@ -48,54 +48,54 @@ canvas = tk.Canvas(root, width=700, height=600, bg="white",
                    highlightthickness=2, highlightbackground="red")
 canvas.pack(side=tk.LEFT, padx=10, pady=10)
 
-def abrir_janela_objeto():
-    top = tk.Toplevel(root)
-    top.title("Incluir Objeto")
-    top.grab_set()  # bloqueia a janela principal enquanto essa está aberta
+def open_add_object_dialog():
+    dialog = tk.Toplevel(root)
+    dialog.title("Add Object")
+    dialog.grab_set()
 
-    # Campo Nome
-    nome_frame = tk.Frame(top)
-    nome_frame.pack(fill=tk.X, padx=10, pady=5)
-    tk.Label(nome_frame, text="Nome").pack(side=tk.LEFT)
-    nome_entry = tk.Entry(nome_frame)
-    nome_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+    # Name field
+    name_frame = tk.Frame(dialog)
+    name_frame.pack(fill=tk.X, padx=10, pady=5)
+    tk.Label(name_frame, text="Name").pack(side=tk.LEFT)
+    name_entry = tk.Entry(name_frame)
+    name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-    # Abas de tipo
-    notebook = ttk.Notebook(top)
+    # Type tabs
+    notebook = ttk.Notebook(dialog)
     notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-    aba_ponto     = tk.Frame(notebook)
-    aba_reta      = tk.Frame(notebook)
-    aba_wireframe = tk.Frame(notebook)
+    point_tab     = tk.Frame(notebook)
+    line_tab      = tk.Frame(notebook)
+    wireframe_tab = tk.Frame(notebook)
 
-    notebook.add(aba_ponto,     text="Ponto")
-    notebook.add(aba_reta,      text="Reta")
-    notebook.add(aba_wireframe, text="Wireframe")
+    notebook.add(point_tab,     text="Point")
+    notebook.add(line_tab,      text="Line")
+    notebook.add(wireframe_tab, text="Wireframe")
 
-    # Aba Ponto
-    tk.Label(aba_ponto, text="Coordenadas:").pack(pady=5)
-    tk.Label(aba_ponto, text="(x, y)").pack()
-    ponto_entry = tk.Entry(aba_ponto, width=30)
-    ponto_entry.pack(pady=5)
+    # Point tab
+    tk.Label(point_tab, text="Coordinates:").pack(pady=5)
+    tk.Label(point_tab, text="(x, y)").pack()
+    point_entry = tk.Entry(point_tab, width=30)
+    point_entry.pack(pady=5)
 
-    # Aba Reta
-    tk.Label(aba_reta, text="Coordenadas:").pack(pady=5)
-    tk.Label(aba_reta, text="(x1,y1),(x2,y2)").pack()
-    reta_entry = tk.Entry(aba_reta, width=30)
-    reta_entry.pack(pady=5)
+    # Line tab
+    tk.Label(line_tab, text="Coordinates:").pack(pady=5)
+    tk.Label(line_tab, text="(x1,y1),(x2,y2)").pack()
+    line_entry = tk.Entry(line_tab, width=30)
+    line_entry.pack(pady=5)
 
-    # Aba Wireframe
-    tk.Label(aba_wireframe, text="Coordenadas:").pack(pady=5)
-    tk.Label(aba_wireframe, text="(x1,y1),(x2,y2),(x3,y3),...").pack()
-    wire_entry = tk.Entry(aba_wireframe, width=30)
-    wire_entry.pack(pady=5)
+    # Wireframe tab
+    tk.Label(wireframe_tab, text="Coordinates:").pack(pady=5)
+    tk.Label(wireframe_tab, text="(x1,y1),(x2,y2),(x3,y3),...").pack()
+    wireframe_entry = tk.Entry(wireframe_tab, width=30)
+    wireframe_entry.pack(pady=5)
 
-    # Botões OK / Cancel
-    btn_frame = tk.Frame(top)
-    btn_frame.pack(fill=tk.X, padx=10, pady=5)
-    tk.Button(btn_frame, text="Cancel", command=top.destroy).pack(side=tk.RIGHT, padx=5)
-    tk.Button(btn_frame, text="OK").pack(side=tk.RIGHT)
+    # OK / Cancel buttons
+    button_frame = tk.Frame(dialog)
+    button_frame.pack(fill=tk.X, padx=10, pady=5)
+    tk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+    tk.Button(button_frame, text="OK").pack(side=tk.RIGHT)
 
-tk.Button(panel, text="Adicionar Objeto", command=abrir_janela_objeto).pack(fill=tk.X, pady=2)
+tk.Button(panel, text="Add Object", command=open_add_object_dialog).pack(fill=tk.X, pady=2)
 
 root.mainloop()
