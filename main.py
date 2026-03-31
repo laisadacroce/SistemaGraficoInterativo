@@ -1,25 +1,10 @@
 import tkinter as tk
-from tkinter import ttk
-from model import display_file, Point, Line, Wireframe
+from tkinter import ttk, messagebox
+from model import DisplayFile, Window, Point, Line, Wireframe
 from transform import window_to_viewport
 
-# Window como primeiro objeto do display file (não desenhável)
-w_points = [Point("", -300, -300), Point("", 300, -300),
-            Point("", 300, 300), Point("", -300, 300)]
-window_obj = Wireframe("window", w_points, drawable=False)
-display_file.insert(0, window_obj)
-
-def get_window():
-    """Extrai (x_min, y_min, x_max, y_max) das coordenadas da window_obj."""
-    coords = window_obj.coordinates
-    xs = [c[0] for c in coords]
-    ys = [c[1] for c in coords]
-    return (min(xs), min(ys), max(xs), max(ys))
-
-def set_window(x_min, y_min, x_max, y_max):
-    """Atualiza as coordenadas da window_obj."""
-    window_obj.coordinates = [(x_min, y_min), (x_max, y_min),
-                              (x_max, y_max), (x_min, y_max)]
+window = Window(-300, -300, 300, 300)
+display_file = DisplayFile(window)
 
 root = tk.Tk()
 root.title("Sistema Gráfico Interativo - INE5420")
@@ -46,27 +31,20 @@ step_entry.insert(0, "10")
 step_entry.pack(side=tk.LEFT)
 tk.Label(step_frame, text="%", bg="lightgray").pack(side=tk.LEFT)
 
+def get_step():
+    return float(step_entry.get()) / 100
+
 # Pan / Zoom functions
 def pan(dx, dy):
-    step = float(step_entry.get()) / 100
-    x_min, y_min, x_max, y_max = get_window()
-    width = x_max - x_min
-    height = y_max - y_min
-    set_window(x_min + dx * width * step, y_min + dy * height * step,
-               x_max + dx * width * step, y_max + dy * height * step)
+    window.pan(dx, dy, get_step())
     redraw()
 
 def zoom(factor):
-    step = float(step_entry.get()) / 100
-    x_min, y_min, x_max, y_max = get_window()
-    width = x_max - x_min
-    height = y_max - y_min
-    cx = (x_min + x_max) / 2
-    cy = (y_min + y_max) / 2
-    new_width = width * (1 - factor * step)
-    new_height = height * (1 - factor * step)
-    set_window(cx - new_width / 2, cy - new_height / 2,
-               cx + new_width / 2, cy + new_height / 2)
+    window.zoom(factor, get_step())
+    redraw()
+
+def reset():
+    window.reset()
     redraw()
 
 # Pan buttons
@@ -86,20 +64,20 @@ tk.Label(zoom_frame, text="Zoom", bg="lightgray").pack(side=tk.LEFT, padx=5)
 tk.Button(zoom_frame, text="+", width=3, command=lambda: zoom(1)).pack(side=tk.LEFT, padx=2)
 tk.Button(zoom_frame, text="-", width=3, command=lambda: zoom(-1)).pack(side=tk.LEFT, padx=2)
 
+tk.Button(window_frame, text="Reset", command=reset).pack(pady=5)
+
 # ── Canvas (viewport) ────────────────────────────────────
-canvas = tk.Canvas(root, width=700, height=600, bg="white",
+canvas = tk.Canvas(root, width=800, height=800, bg="white",
                    highlightthickness=2, highlightbackground="red")
 canvas.pack(side=tk.LEFT, padx=10, pady=10)
 
 def redraw():
     canvas.delete("all")
 
-    win = get_window()
+    win = window.bounds()
     vp = (0, 0, canvas.winfo_width(), canvas.winfo_height())
 
-    for obj in display_file:
-        if not obj.drawable:
-            continue
+    for obj in display_file.drawable_objects():
         if obj.object_type == "point":
             x, y = obj.coordinates[0]
             sx, sy = window_to_viewport(x, y, win, vp)
@@ -156,7 +134,11 @@ def open_add_object_dialog():
         name = name_entry.get().strip()
         if not name:
             return
-        
+
+        if display_file.has_name(name):
+            messagebox.showwarning("Duplicate name", f"An object named '{name}' already exists.", parent=dialog)
+            return
+
         tab = notebook.index(notebook.select())
 
         if tab == 0: # Point
@@ -168,13 +150,13 @@ def open_add_object_dialog():
             p1 = Point("", coords[0][0], coords[0][1])
             p2 = Point("", coords[1][0], coords[1][1])
             obj = Line(name, p1, p2)
-        
+
         elif tab == 2: # Wireframe
             coords = list(eval(wireframe_entry.get()))
             points = [Point("", c[0], c[1]) for c in coords]
             obj = Wireframe(name, points)
 
-        display_file.append(obj)
+        display_file.add(obj)
         object_listbox.insert(tk.END, str(obj))
         redraw()
         dialog.destroy()
