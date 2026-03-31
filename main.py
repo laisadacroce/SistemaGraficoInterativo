@@ -3,7 +3,23 @@ from tkinter import ttk
 from model import display_file, Point, Line, Wireframe
 from transform import window_to_viewport
 
-window = [-300, -300, 300, 300]  # (x_min, y_min, x_max, y_max)
+# Window como primeiro objeto do display file (não desenhável)
+w_points = [Point("", -300, -300), Point("", 300, -300),
+            Point("", 300, 300), Point("", -300, 300)]
+window_obj = Wireframe("window", w_points, drawable=False)
+display_file.insert(0, window_obj)
+
+def get_window():
+    """Extrai (x_min, y_min, x_max, y_max) das coordenadas da window_obj."""
+    coords = window_obj.coordinates
+    xs = [c[0] for c in coords]
+    ys = [c[1] for c in coords]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+def set_window(x_min, y_min, x_max, y_max):
+    """Atualiza as coordenadas da window_obj."""
+    window_obj.coordinates = [(x_min, y_min), (x_max, y_min),
+                              (x_max, y_max), (x_min, y_max)]
 
 root = tk.Tk()
 root.title("Sistema Gráfico Interativo - INE5420")
@@ -33,26 +49,24 @@ tk.Label(step_frame, text="%", bg="lightgray").pack(side=tk.LEFT)
 # Pan / Zoom functions
 def pan(dx, dy):
     step = float(step_entry.get()) / 100
-    width = window[2] - window[0]
-    height = window[3] - window[1]
-    window[0] += dx * width * step
-    window[1] += dy * height * step
-    window[2] += dx * width * step
-    window[3] += dy * height * step
+    x_min, y_min, x_max, y_max = get_window()
+    width = x_max - x_min
+    height = y_max - y_min
+    set_window(x_min + dx * width * step, y_min + dy * height * step,
+               x_max + dx * width * step, y_max + dy * height * step)
     redraw()
 
 def zoom(factor):
     step = float(step_entry.get()) / 100
-    width = window[2] - window[0]
-    height = window[3] - window[1]
-    cx = (window[0] + window[2]) / 2
-    cy = (window[1] + window[3]) / 2
+    x_min, y_min, x_max, y_max = get_window()
+    width = x_max - x_min
+    height = y_max - y_min
+    cx = (x_min + x_max) / 2
+    cy = (y_min + y_max) / 2
     new_width = width * (1 - factor * step)
     new_height = height * (1 - factor * step)
-    window[0] = cx - new_width / 2
-    window[1] = cy - new_height / 2
-    window[2] = cx + new_width / 2
-    window[3] = cy + new_height / 2
+    set_window(cx - new_width / 2, cy - new_height / 2,
+               cx + new_width / 2, cy + new_height / 2)
     redraw()
 
 # Pan buttons
@@ -80,17 +94,20 @@ canvas.pack(side=tk.LEFT, padx=10, pady=10)
 def redraw():
     canvas.delete("all")
 
+    win = get_window()
     vp = (0, 0, canvas.winfo_width(), canvas.winfo_height())
 
     for obj in display_file:
+        if not obj.drawable:
+            continue
         if obj.object_type == "point":
             x, y = obj.coordinates[0]
-            sx, sy = window_to_viewport(x, y, window, vp)
+            sx, sy = window_to_viewport(x, y, win, vp)
             canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2, fill="black")
         else:
             for p1, p2 in obj.draw_segments():
-                x1, y1 = window_to_viewport(p1[0], p1[1], window, vp)
-                x2, y2 = window_to_viewport(p2[0], p2[1], window, vp)
+                x1, y1 = window_to_viewport(p1[0], p1[1], win, vp)
+                x2, y2 = window_to_viewport(p2[0], p2[1], win, vp)
                 canvas.create_line(x1, y1, x2, y2, fill="black")
 
 def open_add_object_dialog():

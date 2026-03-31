@@ -2,9 +2,10 @@ display_file = []
 
 
 class GraphicObject:
-    def __init__(self, name, coordinates):
+    def __init__(self, name, coordinates, drawable=True):
         self.name = name
         self.coordinates = coordinates
+        self.drawable = drawable
 
     @property
     def object_type(self):
@@ -44,9 +45,9 @@ class Line(GraphicObject):
 
 
 class Wireframe(GraphicObject):
-    def __init__(self, name, points):
+    def __init__(self, name, points, drawable=True):
         coords = [p.coordinates[0] for p in points]
-        super().__init__(name, coords)
+        super().__init__(name, coords, drawable)
         self.points = points
 
     @property
