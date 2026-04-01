@@ -1,7 +1,10 @@
 class GraphicObject:
+    """Base class for all graphic objects. Subclasses must implement
+    object_type and draw_segments."""
+
     def __init__(self, name, coordinates, drawable=True):
         self.name = name
-        self.coordinates = coordinates
+        self.coordinates = coordinates  # list of (x, y) tuples
         self.drawable = drawable
 
     @property
@@ -9,6 +12,7 @@ class GraphicObject:
         raise NotImplementedError
 
     def draw_segments(self):
+        """Returns a list of ((x1,y1), (x2,y2)) pairs to be drawn as lines."""
         raise NotImplementedError
 
     def __str__(self):
@@ -16,6 +20,8 @@ class GraphicObject:
 
 
 class Point(GraphicObject):
+    """A single point in 2D space."""
+
     def __init__(self, name, x, y):
         super().__init__(name, [(x, y)])
 
@@ -24,10 +30,12 @@ class Point(GraphicObject):
         return "point"
 
     def draw_segments(self):
-        return []
+        return []  # points are drawn as small circles, not segments
 
 
 class Line(GraphicObject):
+    """A line segment defined by two points."""
+
     def __init__(self, name, p1, p2):
         super().__init__(name, [p1.coordinates[0], p2.coordinates[0]])
 
@@ -40,6 +48,8 @@ class Line(GraphicObject):
 
 
 class Wireframe(GraphicObject):
+    """A closed polygon defined by a list of connected points."""
+
     def __init__(self, name, points, drawable=True):
         coords = [p.coordinates[0] for p in points]
         super().__init__(name, coords, drawable)
@@ -49,6 +59,8 @@ class Wireframe(GraphicObject):
         return "wireframe"
 
     def draw_segments(self):
+        """Connects each point to the next. The modulo (%) wraps the last
+        index back to 0, closing the polygon."""
         segments = []
         for i in range(len(self.coordinates)):
             p1 = self.coordinates[i]
@@ -58,10 +70,15 @@ class Wireframe(GraphicObject):
 
 
 class Window(GraphicObject):
+    """The visible region of the world. Lives in the display file as the
+    first element (drawable=False) so that transformations can be applied
+    to it just like any other object."""
+
     def __init__(self, x_min, y_min, x_max, y_max):
         coords = [(x_min, y_min), (x_max, y_min),
                    (x_max, y_max), (x_min, y_max)]
         super().__init__("window", coords, drawable=False)
+        # Copy of the initial coordinates for reset
         self._initial_coords = list(coords)
 
     @property
@@ -72,6 +89,7 @@ class Window(GraphicObject):
         return []
 
     def bounds(self):
+        """Returns (x_min, y_min, x_max, y_max) from the corner coordinates."""
         xs = [c[0] for c in self.coordinates]
         ys = [c[1] for c in self.coordinates]
         return (min(xs), min(ys), max(xs), max(ys))
@@ -81,6 +99,8 @@ class Window(GraphicObject):
                             (x_max, y_max), (x_min, y_max)]
 
     def pan(self, dx, dy, step):
+        """Shifts the window by a fraction (step) of its size in the
+        direction given by dx, dy."""
         x_min, y_min, x_max, y_max = self.bounds()
         width = x_max - x_min
         height = y_max - y_min
@@ -90,6 +110,8 @@ class Window(GraphicObject):
                          y_max + dy * height * step)
 
     def zoom(self, factor, step):
+        """Resizes the window around its center. factor=1 zooms in
+        (shrinks window), factor=-1 zooms out (expands window)."""
         x_min, y_min, x_max, y_max = self.bounds()
         width = x_max - x_min
         height = y_max - y_min
@@ -101,10 +123,14 @@ class Window(GraphicObject):
                          cx + new_width / 2, cy + new_height / 2)
 
     def reset(self):
+        """Restores the window to its initial coordinates."""
         self.coordinates = list(self._initial_coords)
 
 
 class DisplayFile:
+    """Manages the collection of graphic objects. The window is always
+    the first element and cannot be removed."""
+
     def __init__(self, window):
         self.window = window
         self._objects = [window]
@@ -113,18 +139,15 @@ class DisplayFile:
         self._objects.append(obj)
 
     def remove(self, name):
+        # 'is' checks identity (same object in memory), ensuring
+        # the window is never removed even if name matches
         self._objects = [o for o in self._objects if o.name != name or o is self.window]
-
-    def get_by_name(self, name):
-        for obj in self._objects:
-            if obj.name == name:
-                return obj
-        return None
 
     def has_name(self, name):
         return any(obj.name == name for obj in self._objects)
 
     def drawable_objects(self):
+        """Returns only objects that should be drawn (excludes the window)."""
         return [obj for obj in self._objects if obj.drawable]
 
     def __iter__(self):

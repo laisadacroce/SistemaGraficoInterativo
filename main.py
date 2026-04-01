@@ -141,20 +141,24 @@ def open_add_object_dialog():
 
         tab = notebook.index(notebook.select())
 
-        if tab == 0: # Point
-            coords = list(eval(point_entry.get()))
-            obj = Point(name, coords[0], coords[1])
+        try:
+            if tab == 0: # Point
+                coords = list(eval(point_entry.get()))
+                obj = Point(name, coords[0], coords[1])
 
-        elif tab == 1: # Line
-            coords = list(eval(line_entry.get()))
-            p1 = Point("", coords[0][0], coords[0][1])
-            p2 = Point("", coords[1][0], coords[1][1])
-            obj = Line(name, p1, p2)
+            elif tab == 1: # Line
+                coords = list(eval(line_entry.get()))
+                p1 = Point("", coords[0][0], coords[0][1])
+                p2 = Point("", coords[1][0], coords[1][1])
+                obj = Line(name, p1, p2)
 
-        elif tab == 2: # Wireframe
-            coords = list(eval(wireframe_entry.get()))
-            points = [Point("", c[0], c[1]) for c in coords]
-            obj = Wireframe(name, points)
+            elif tab == 2: # Wireframe
+                coords = list(eval(wireframe_entry.get()))
+                points = [Point("", c[0], c[1]) for c in coords]
+                obj = Wireframe(name, points)
+        except Exception:
+            messagebox.showerror("Invalid input", "Could not parse coordinates. Check the format.", parent=dialog)
+            return
 
         display_file.add(obj)
         object_listbox.insert(tk.END, str(obj))
@@ -168,5 +172,17 @@ def open_add_object_dialog():
     tk.Button(button_frame, text="OK", command=on_ok).pack(side=tk.RIGHT)
 
 tk.Button(panel, text="Add Object", command=open_add_object_dialog).pack(fill=tk.X, pady=2)
+
+def delete_selected_object():
+    selection = object_listbox.curselection()
+    if not selection:
+        return
+    index = selection[0]
+    name = object_listbox.get(index).split("[")[1].split("]")[0]
+    display_file.remove(name)
+    object_listbox.delete(index)
+    redraw()
+
+tk.Button(panel, text="Delete Object", command=delete_selected_object).pack(fill=tk.X, pady=2)
 
 root.mainloop()

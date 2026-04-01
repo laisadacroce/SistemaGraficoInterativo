@@ -2,8 +2,8 @@ def window_to_viewport(x_w, y_w, window, viewport):
     """
     Transforms a point from window (world) coordinates to viewport (screen) coordinates.
 
-    window:   (x_min, y_min, x_max, y_max) — the world rectangle we're looking at
-    viewport: (x_min, y_min, x_max, y_max) — the screen rectangle we draw into
+    window:   (x_min, y_min, x_max, y_max) — the world rectangle we're looking at.
+    viewport: (x_min, y_min, x_max, y_max) — the screen rectangle we draw into.
 
     Uses uniform scaling to avoid distortion.
     """
@@ -26,4 +26,3 @@ def window_to_viewport(x_w, y_w, window, viewport):
     x_vp = (x_w - wx_min) * s + offset_x
     y_vp = (wy_max - y_w) * s + offset_y
     return x_vp, y_vp
-    

@@ -48,6 +48,7 @@ Funcao `window_to_viewport(x_w, y_w, window, viewport)`:
 - Painel esquerdo: lista de objetos, controles de pan/zoom/reset, campo de step (%)
 - Canvas (viewport) de 800x800 com borda vermelha
 - Dialogo para adicionar objetos (Point, Line, Wireframe) com abas
+- Remocao de objetos selecionados na lista
 - Validacao de nomes duplicados
 
 ## Configuracoes
