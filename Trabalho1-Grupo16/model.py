@@ -15,17 +15,6 @@ class GraphicObject:
         """Returns a list of ((x1,y1), (x2,y2)) pairs to be drawn as lines."""
         raise NotImplementedError
 
-    def center(self):
-        """Returns the geometric center (cx, cy) of the object.
-
-        This is the average of all coordinates (EQ. 2.14 from the textbook).
-        Used by rotation and scaling to transform 'naturally' around
-        the object's center instead of around the origin."""
-        n = len(self.coordinates)
-        cx = sum(x for x, y in self.coordinates) / n
-        cy = sum(y for x, y in self.coordinates) / n
-        return (cx, cy)
-
     def __str__(self):
         return f"{self.object_type.capitalize()}[{self.name}]"
 
