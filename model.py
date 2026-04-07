@@ -2,10 +2,11 @@ class GraphicObject:
     """Base class for all graphic objects. Subclasses must implement
     object_type and draw_segments."""
 
-    def __init__(self, name, coordinates, drawable=True):
+    def __init__(self, name, coordinates, drawable=True, color="#000000"):
         self.name = name
         self.coordinates = coordinates  # list of (x, y) tuples
         self.drawable = drawable
+        self.color = color  # RGB hex color for drawing
 
     @property
     def object_type(self):
@@ -18,7 +19,7 @@ class GraphicObject:
     def center(self):
         """Returns the geometric center (cx, cy) of the object.
 
-        This is the average of all coordinates (EQ. 2.14 from the textbook).
+        This is the average of all coordinates.
         Used by rotation and scaling to transform 'naturally' around
         the object's center instead of around the origin."""
         n = len(self.coordinates)
@@ -153,6 +154,13 @@ class DisplayFile:
         # 'is' checks identity (same object in memory), ensuring
         # the window is never removed even if name matches
         self._objects = [o for o in self._objects if o.name != name or o is self.window]
+
+    def get_by_name(self, name):
+        """Returns the object with the given name, or None."""
+        for obj in self._objects:
+            if obj.name == name:
+                return obj
+        return None
 
     def has_name(self, name):
         return any(obj.name == name for obj in self._objects)
