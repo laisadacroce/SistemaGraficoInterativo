@@ -23,7 +23,7 @@ def save_obj(filepath, display_file):
         for x, y in obj.coordinates:
             if (x, y) not in vertices:
                 vertices[(x, y)] = len(vertices) + 1
-        materials[obj.name] = obj.color
+        materials[obj.name.replace(" ", "_")] = obj.color
 
     # Write .obj file
     with open(filepath, "w") as f:
@@ -37,8 +37,9 @@ def save_obj(filepath, display_file):
 
         # Write each object
         for obj in display_file.drawable_objects():
-            f.write(f"o {obj.name}\n")
-            f.write(f"usemtl {obj.name}\n")
+            safe_name = obj.name.replace(" ", "_")
+            f.write(f"o {safe_name}\n")
+            f.write(f"usemtl {safe_name}\n")
 
             indices = [vertices[(x, y)] for x, y in obj.coordinates]
 
@@ -77,7 +78,9 @@ def load_obj(filepath):
             keyword = parts[0]
 
             if keyword == "mtllib":
-                mtl_path = os.path.join(dir_path, parts[1])
+                # Join all parts after 'mtllib' to handle filenames with spaces
+                mtl_name = " ".join(parts[1:])
+                mtl_path = os.path.join(dir_path, mtl_name)
                 if os.path.exists(mtl_path):
                     materials = _read_mtl(mtl_path)
 

@@ -1,6 +1,6 @@
 # Sistema Gráfico Interativo - INE5420
 
-Sistema gráfico interativo 2D desenvolvido em Python 3 com Tkinter para a disciplina INE5420.
+Sistema gráfico interativo 2D desenvolvido em Python 3 com Tkinter para a disciplina INE5420 (UFSC).
 
 ## Como rodar
 
@@ -13,7 +13,8 @@ python3 main.py
 ```
 main.py        → Interface gráfica (Tkinter) e conexão entre componentes
 model.py       → Classes dos objetos gráficos, Window e DisplayFile
-transform.py   → Transformadas: viewport, matrizes homogêneas e transformações 2D
+transform.py   → Matrizes homogêneas, transformações 2D, SCN e viewport
+obj_io.py      → Leitura e escrita de arquivos Wavefront .obj
 ```
 
 ## Arquitetura
@@ -30,14 +31,11 @@ GraphicObject (classe base)
 └── Window      → retângulo da window (drawable=False)
 ```
 
-- **GraphicObject**: classe base com `name`, `coordinates`, `drawable`, `color` e `center()`. Define a interface `object_type` e `draw_segments()` que cada subclasse implementa.
-- **Window**: primeiro elemento do display file, nao é desenhada. Encapsula `pan()`, `zoom()` e `reset()`.
-- **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida.
+- **GraphicObject**: classe base com `name`, `coordinates`, `drawable`, `color`, `normalized_coords` e `center()`. Define a interface `object_type`, `draw_segments()` e `draw_segments_scn()` que cada subclasse implementa.
+- **Window**: primeiro elemento do display file, não é desenhada. Encapsula `pan()`, `zoom()`, `rotate()` e `reset()`. Possui vetor view-up (`vup`) e ângulo acumulado para rotação.
+- **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida. Método `update_scn()` recalcula coordenadas normalizadas de todos os objetos.
 
 ### transform.py
-
-Transformada de viewport:
-- `window_to_viewport()`: mapeia coordenadas do mundo para a tela, com escala uniforme e inversão do eixo Y
 
 Matrizes de transformação em coordenadas homogêneas (3x3):
 - `translation_matrix(dx, dy)`
@@ -56,26 +54,53 @@ Transformações compostas:
 Aplicação:
 - `apply_transform(obj, matrix)`: aplica qualquer matriz 3x3 nas coordenadas de um objeto
 
+Pipeline SCN (Sistema de Coordenadas Normalizado):
+- `scn_matrix(window)`: gera a matriz que transforma coordenadas do mundo para SCN, implementando o algoritmo "Gerar Descrição em SCN" (translada centro da window para origem → rotaciona por -ângulo → escalona para [-1, 1])
+- `scn_to_viewport(x_scn, y_scn, viewport)`: mapeia coordenadas SCN [-1, 1] para pixels do viewport
+
+### obj_io.py
+
+- `save_obj(filepath, display_file)`: salva todos os objetos do display file em formato Wavefront .obj, com cores em arquivo .mtl associado
+- `load_obj(filepath)`: carrega objetos de um arquivo .obj e retorna lista de GraphicObjects
+
 ### main.py
 
 - Cria a window (600x600) e o display file
-- Painel esquerdo: lista de objetos, controles de pan/zoom/reset, campo de step (%)
+- Painel esquerdo: lista de objetos, controles de pan/zoom/rotação/reset, campo de step (%)
 - Canvas (viewport) de 800x800 com borda vermelha
 - Dialog para adicionar objetos (Point, Line, Wireframe) com abas e seleção de cor
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
 - Dialog de transformações com lista de operações pendentes
+- Botões de importação/exportação de arquivos .obj
+
+## Pipeline de visualização
+
+```
+Coordenadas do mundo → scn_matrix(window) → Coordenadas SCN [-1,1] → scn_to_viewport → Pixels
+```
+
+A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na posição, zoom e rotação da window. As coordenadas do mundo nunca são alteradas pela navegação da window.
 
 ## Transformações 2D
 
 O usuário seleciona um objeto na lista, clica em "Transform" e pode adicionar múltiplas transformações a uma lista pendente. Ao clicar "Apply", todas são compostas em uma única matriz e aplicadas de uma vez.
 
 Transformações disponíveis:
-- **Translation**: desloca o objeto por (dx, dy)
+- **Translation**: desloca o objeto por (dx, dy), relativo à orientação da window
 - **Scaling**: escalonamento natural em torno do centro do objeto
 - **Rotation - World center**: rotação em torno da origem (0, 0)
 - **Rotation - Object center**: rotação em torno do centro geométrico do objeto
 - **Rotation - Arbitrary point**: rotação em torno de um ponto (px, py) qualquer
+
+## Rotação da window
+
+A window pode ser rotacionada pelo campo de ângulo e botões de rotação no painel. O pan (Up/Down/Left/Right) respeita a rotação — "Up" sempre move na direção que aparenta ser "cima" na tela, independente do ângulo da window.
+
+## Wavefront .obj
+
+- **Save .obj**: exporta todos os objetos do mundo para um arquivo `.obj` com arquivo `.mtl` associado para cores (formato RGB)
+- **Load .obj**: importa objetos de um arquivo `.obj`, lendo cores do `.mtl` se presente
 
 ## Configurações
 
@@ -84,6 +109,7 @@ Transformações disponíveis:
 | Window inicial | [-300, -300, 300, 300] (600x600) |
 | Viewport (canvas) | 800x800 |
 | Step padrão | 10% |
+| Ângulo de rotação padrão | 15° |
 | Aspect ratio | 1:1 (window e viewport) |
 
 ## Entrada de coordenadas

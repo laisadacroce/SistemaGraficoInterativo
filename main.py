@@ -1,3 +1,4 @@
+import math
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
 from model import DisplayFile, Window, Point, Line, Wireframe
@@ -330,7 +331,18 @@ def open_transform_dialog():
     def build_translation():
         dx = float(param_entries["dx"].get())
         dy = float(param_entries["dy"].get())
-        return translation_matrix(dx, dy), f"Translate ({dx}, {dy})"
+        # Rotate (dx, dy) by the window angle so the translation is
+        # relative to the user's view, not world axes
+        angle = window.angle
+        if angle != 0:
+            rad = math.radians(angle)
+            cos = math.cos(rad)
+            sin = math.sin(rad)
+            dx_world = dx * cos - dy * sin
+            dy_world = dx * sin + dy * cos
+        else:
+            dx_world, dy_world = dx, dy
+        return translation_matrix(dx_world, dy_world), f"Translate ({dx}, {dy})"
 
     def build_scaling():
         sx = float(param_entries["sx"].get())
