@@ -145,41 +145,33 @@ def apply_transform(obj, matrix):
     obj.coordinates = new_coords
 
 
-# ── SCN (Normalized Coordinate System) ───────────────────
-
-def scn_matrix(window):
-    """Generates the matrix that transforms world coordinates to SCN.
-
-    Implements the 'Gerar Descrição em SCN' algorithm:
-    1. Translate window center (Wc) to the origin
-    2. Rotate by -angle to align Vup with the Y axis
-    3. Scale to normalize into [-1, 1] range
-
-    The result is a single composed matrix."""
-    cx, cy = window.center()
-    w = window.width()
-    h = window.height()
-    return compose_matrices([
-        translation_matrix(-cx, -cy),
-        rotation_matrix(-window.angle),
-        scaling_matrix(2 / w, 2 / h),
-    ])
-
-
 # ── Viewport transformation ──────────────────────────────
 
-def scn_to_viewport(x_scn, y_scn, viewport):
-    """Transforms a point from SCN coordinates [-1, 1] to viewport (screen)
-    coordinates.
+def window_to_viewport(x_w, y_w, window, viewport):
+    """
+    Transforms a point from window (world) coordinates to viewport (screen) coordinates.
 
-    The SCN window is always fixed at [-1, -1, 1, 1]."""
+    window:   (x_min, y_min, x_max, y_max) — the world rectangle we're looking at.
+    viewport: (x_min, y_min, x_max, y_max) — the screen rectangle we draw into.
+
+    Uses uniform scaling to avoid distortion.
+    """
+    wx_min, wy_min, wx_max, wy_max = window
     vx_min, vy_min, vx_max, vy_max = viewport
 
-    # Map from [-1, 1] to viewport range
-    x_vp = (x_scn + 1) / 2 * (vx_max - vx_min) + vx_min
-    # Y is inverted: SCN +1 (top) maps to viewport vy_min (top of screen)
-    y_vp = (1 - y_scn) / 2 * (vy_max - vy_min) + vy_min
+    # Scale factors for x and y
+    sx = (vx_max - vx_min) / (wx_max - wx_min)
+    sy = (vy_max - vy_min) / (wy_max - wy_min)
 
+    # Use the smaller scale factor to maintain aspect ratio
+    s = min(sx, sy)
+
+    # Center the result in the viewport (the axis with leftover space gets centered)
+    used_width = (wx_max - wx_min) * s
+    used_height = (wy_max - wy_min) * s
+    offset_x = vx_min + ((vx_max - vx_min) - used_width) / 2
+    offset_y = vy_min + ((vy_max - vy_min) - used_height) / 2
+
+    x_vp = (x_w - wx_min) * s + offset_x
+    y_vp = (wy_max - y_w) * s + offset_y
     return x_vp, y_vp
-
-

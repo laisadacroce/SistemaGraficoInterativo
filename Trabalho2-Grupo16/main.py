@@ -1,12 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, colorchooser, filedialog
+from tkinter import ttk, messagebox, colorchooser
 from model import DisplayFile, Window, Point, Line, Wireframe
-from transform import (scn_to_viewport, scn_matrix, apply_transform,
-                        compose_matrices, translation_matrix,
-                        natural_scaling_matrix, rotation_matrix,
-                        rotation_around_center_matrix,
+from transform import (window_to_viewport, apply_transform, compose_matrices,
+                        translation_matrix, natural_scaling_matrix,
+                        rotation_matrix, rotation_around_center_matrix,
                         rotation_around_point_matrix)
-from obj_io import save_obj, load_obj
 
 window = Window(-300, -300, 300, 300)
 display_file = DisplayFile(window)
@@ -69,30 +67,6 @@ tk.Label(zoom_frame, text="Zoom", bg="lightgray").pack(side=tk.LEFT, padx=5)
 tk.Button(zoom_frame, text="+", width=3, command=lambda: zoom(1)).pack(side=tk.LEFT, padx=2)
 tk.Button(zoom_frame, text="-", width=3, command=lambda: zoom(-1)).pack(side=tk.LEFT, padx=2)
 
-# Window rotation
-rotate_frame = tk.Frame(window_frame, bg="lightgray")
-rotate_frame.pack(fill=tk.X, padx=5, pady=2)
-tk.Label(rotate_frame, text="Rotate:", bg="lightgray").pack(side=tk.LEFT)
-rotate_entry = tk.Entry(rotate_frame, width=5)
-rotate_entry.insert(0, "15")
-rotate_entry.pack(side=tk.LEFT)
-tk.Label(rotate_frame, text="\u00b0", bg="lightgray").pack(side=tk.LEFT)
-
-def rotate_window(direction):
-    try:
-        angle = float(rotate_entry.get()) * direction
-        window.rotate(angle)
-        redraw()
-    except ValueError:
-        pass
-
-rotate_btn_frame = tk.Frame(window_frame, bg="lightgray")
-rotate_btn_frame.pack(pady=2)
-tk.Button(rotate_btn_frame, text="\u21b6", width=3,
-          command=lambda: rotate_window(1)).pack(side=tk.LEFT, padx=2)
-tk.Button(rotate_btn_frame, text="\u21b7", width=3,
-          command=lambda: rotate_window(-1)).pack(side=tk.LEFT, padx=2)
-
 tk.Button(window_frame, text="Reset", command=reset).pack(pady=5)
 
 # ── Canvas (viewport) ────────────────────────────────────
@@ -103,23 +77,19 @@ canvas.pack(side=tk.LEFT, padx=10, pady=10)
 def redraw():
     canvas.delete("all")
 
-    # Recalculate SCN coordinates for all objects
-    display_file.update_scn(scn_matrix)
-
+    win = window.bounds()
     vp = (0, 0, canvas.winfo_width(), canvas.winfo_height())
 
     for obj in display_file.drawable_objects():
         color = obj.color
         if obj.object_type == "point":
-            if obj.normalized_coords:
-                x, y = obj.normalized_coords[0]
-                sx, sy = scn_to_viewport(x, y, vp)
-                canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
-                                   fill=color, outline=color)
+            x, y = obj.coordinates[0]
+            sx, sy = window_to_viewport(x, y, win, vp)
+            canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2, fill=color, outline=color)
         else:
-            for p1, p2 in obj.draw_segments_scn():
-                x1, y1 = scn_to_viewport(p1[0], p1[1], vp)
-                x2, y2 = scn_to_viewport(p2[0], p2[1], vp)
+            for p1, p2 in obj.draw_segments():
+                x1, y1 = window_to_viewport(p1[0], p1[1], win, vp)
+                x2, y2 = window_to_viewport(p2[0], p2[1], win, vp)
                 canvas.create_line(x1, y1, x2, y2, fill=color)
 
 # ── Add object dialog ────────────────────────────────────
@@ -270,6 +240,7 @@ def open_transform_dialog():
     dialog.title(f"Transform: {obj}")
     dialog.grab_set()
 
+    # Pending transformations: list of (matrix, description)
     pending = []
 
     # ── Left side: transformation input ──
@@ -287,6 +258,7 @@ def open_transform_dialog():
     transform_type.set("Translation")
     transform_type.pack(fill=tk.X, pady=5)
 
+    # Dynamic parameter fields
     params_frame = tk.Frame(input_frame)
     params_frame.pack(fill=tk.X, pady=5)
     param_entries = {}
@@ -359,6 +331,7 @@ def open_transform_dialog():
         "Rotation - Arbitrary point": build_rotation_point,
     }
 
+    # ── Actions ──
     def add_transform():
         try:
             matrix, desc = builders[transform_type.get()]()
@@ -393,39 +366,5 @@ def open_transform_dialog():
     tk.Button(bottom_frame, text="Apply", command=apply_transforms).pack(side=tk.RIGHT)
 
 tk.Button(panel, text="Transform", command=open_transform_dialog).pack(fill=tk.X, pady=2)
-
-# ── OBJ import/export ────────────────────────────────────
-
-def do_save_obj():
-    filepath = filedialog.asksaveasfilename(
-        defaultextension=".obj",
-        filetypes=[("Wavefront OBJ", "*.obj")],
-        title="Save world as .obj")
-    if filepath:
-        try:
-            save_obj(filepath, display_file)
-            messagebox.showinfo("Saved", f"World saved to {filepath}")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
-def do_load_obj():
-    filepath = filedialog.askopenfilename(
-        filetypes=[("Wavefront OBJ", "*.obj")],
-        title="Load world from .obj")
-    if filepath:
-        try:
-            objects = load_obj(filepath)
-            for obj in objects:
-                if not display_file.has_name(obj.name):
-                    display_file.add(obj)
-                    object_listbox.insert(tk.END, str(obj))
-            redraw()
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
-obj_frame = tk.Frame(panel, bg="lightgray")
-obj_frame.pack(fill=tk.X, pady=5)
-tk.Button(obj_frame, text="Save .obj", command=do_save_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-tk.Button(obj_frame, text="Load .obj", command=do_load_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
 root.mainloop()
