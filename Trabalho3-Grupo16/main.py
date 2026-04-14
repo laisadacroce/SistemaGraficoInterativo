@@ -8,8 +8,6 @@ from transform import (scn_to_viewport, scn_matrix, apply_transform,
                         rotation_around_center_matrix,
                         rotation_around_point_matrix)
 from obj_io import save_obj, load_obj
-from clipping import (clip_point, cohen_sutherland, liang_barsky,
-                       sutherland_hodgman, MARGIN)
 
 window = Window(-300, -300, 300, 300)
 display_file = DisplayFile(window)
@@ -98,21 +96,9 @@ tk.Button(rotate_btn_frame, text="\u21b7", width=3,
 
 tk.Button(window_frame, text="Reset", command=reset).pack(pady=5)
 
-# Section: Clipping algorithm selection
-clip_frame = tk.LabelFrame(panel, text="Line Clipping", bg="lightgray")
-clip_frame.pack(fill=tk.X, pady=5)
-
-clip_algorithm = tk.StringVar(value="cohen-sutherland")
-tk.Radiobutton(clip_frame, text="Cohen-Sutherland", variable=clip_algorithm,
-               value="cohen-sutherland", bg="lightgray",
-               command=lambda: redraw()).pack(anchor="w")
-tk.Radiobutton(clip_frame, text="Liang-Barsky", variable=clip_algorithm,
-               value="liang-barsky", bg="lightgray",
-               command=lambda: redraw()).pack(anchor="w")
-
 # ── Canvas (viewport) ────────────────────────────────────
 canvas = tk.Canvas(root, width=800, height=800, bg="white",
-                   highlightthickness=1, highlightbackground="gray")
+                   highlightthickness=2, highlightbackground="red")
 canvas.pack(side=tk.LEFT, padx=10, pady=10)
 
 def redraw():
@@ -121,73 +107,21 @@ def redraw():
     # Recalculate SCN coordinates for all objects
     display_file.update_scn(scn_matrix)
 
-    # Viewport com margem — menor que o canvas para visualizar clipping.
-    # Usa winfo_reqwidth como fallback pois winfo_width retorna 1
-    # antes do primeiro layout do Tkinter.
-    cw = canvas.winfo_width()
-    ch = canvas.winfo_height()
-    if cw <= 1:
-        cw = canvas.winfo_reqwidth()
-    if ch <= 1:
-        ch = canvas.winfo_reqheight()
-    margin_x = int(cw * MARGIN)
-    margin_y = int(ch * MARGIN)
-    vp = (margin_x, margin_y, cw - margin_x, ch - margin_y)
-
-    # Desenhar moldura vermelha ao redor da viewport
-    canvas.create_rectangle(vp[0], vp[1], vp[2], vp[3],
-                            outline="red", width=2)
-
-    algo = clip_algorithm.get()
+    vp = (0, 0, canvas.winfo_width(), canvas.winfo_height())
 
     for obj in display_file.drawable_objects():
         color = obj.color
-
         if obj.object_type == "point":
             if obj.normalized_coords:
                 x, y = obj.normalized_coords[0]
-                # Clipagem de pontos
-                if clip_point(x, y):
-                    sx, sy = scn_to_viewport(x, y, vp)
-                    canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
-                                       fill=color, outline=color)
-
-        elif obj.object_type == "line":
-            if len(obj.normalized_coords) >= 2:
-                x1, y1 = obj.normalized_coords[0]
-                x2, y2 = obj.normalized_coords[1]
-                # Clipagem de retas — algoritmo selecionado pelo usuário
-                if algo == "cohen-sutherland":
-                    result = cohen_sutherland(x1, y1, x2, y2)
-                else:
-                    result = liang_barsky(x1, y1, x2, y2)
-                if result:
-                    sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
-                    sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
-                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
-
-        elif obj.object_type == "wireframe":
-            # Clipagem de polígonos — Sutherland-Hodgman
-            clipped = sutherland_hodgman(obj.normalized_coords)
-            if clipped:
-                # Converter coordenadas clipadas para viewport
-                vp_points = [scn_to_viewport(x, y, vp) for x, y in clipped]
-
-                if obj.filled:
-                    # Polígono preenchido
-                    flat = []
-                    for px, py in vp_points:
-                        flat.extend([px, py])
-                    if len(vp_points) >= 3:
-                        canvas.create_polygon(*flat, fill=color,
-                                              outline=color)
-                else:
-                    # Wireframe — desenhar arestas
-                    for i in range(len(vp_points)):
-                        p1 = vp_points[i]
-                        p2 = vp_points[(i + 1) % len(vp_points)]
-                        canvas.create_line(p1[0], p1[1], p2[0], p2[1],
-                                           fill=color)
+                sx, sy = scn_to_viewport(x, y, vp)
+                canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
+                                   fill=color, outline=color)
+        else:
+            for p1, p2 in obj.draw_segments_scn():
+                x1, y1 = scn_to_viewport(p1[0], p1[1], vp)
+                x2, y2 = scn_to_viewport(p2[0], p2[1], vp)
+                canvas.create_line(x1, y1, x2, y2, fill=color)
 
 # ── Add object dialog ────────────────────────────────────
 
@@ -257,8 +191,6 @@ def open_add_object_dialog():
     tk.Label(wireframe_tab, text="(x1,y1),(x2,y2),(x3,y3),...").pack()
     wireframe_entry = tk.Entry(wireframe_tab, width=30)
     wireframe_entry.pack(pady=5)
-    filled_var = tk.BooleanVar(value=False)
-    tk.Checkbutton(wireframe_tab, text="Filled", variable=filled_var).pack(pady=5)
 
     def on_ok():
         name = name_entry.get().strip()
@@ -287,7 +219,7 @@ def open_add_object_dialog():
             elif tab == 2: # Wireframe
                 coords = list(eval(wireframe_entry.get()))
                 points = [Point("", c[0], c[1]) for c in coords]
-                obj = Wireframe(name, points, filled=filled_var.get())
+                obj = Wireframe(name, points)
         except Exception:
             messagebox.showerror("Invalid input",
                 "Could not parse coordinates. Check the format.", parent=dialog)
@@ -507,9 +439,5 @@ obj_frame = tk.Frame(panel, bg="lightgray")
 obj_frame.pack(fill=tk.X, pady=5)
 tk.Button(obj_frame, text="Save .obj", command=do_save_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 tk.Button(obj_frame, text="Load .obj", command=do_load_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-
-# Forçar o layout do Tkinter antes do primeiro redraw
-root.update_idletasks()
-redraw()
 
 root.mainloop()

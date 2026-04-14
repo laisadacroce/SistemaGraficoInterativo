@@ -78,10 +78,9 @@ class Line(GraphicObject):
 class Wireframe(GraphicObject):
     """A closed polygon defined by a list of connected points."""
 
-    def __init__(self, name, points, drawable=True, filled=False):
+    def __init__(self, name, points, drawable=True):
         coords = [p.coordinates[0] for p in points]
         super().__init__(name, coords, drawable)
-        self.filled = filled
 
     @property
     def object_type(self):

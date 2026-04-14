@@ -14,7 +14,6 @@ python3 main.py
 main.py        → Interface gráfica (Tkinter) e conexão entre componentes
 model.py       → Classes dos objetos gráficos, Window e DisplayFile
 transform.py   → Matrizes homogêneas, transformações 2D, SCN e viewport
-clipping.py    → Algoritmos de clipping (ponto, retas, polígonos)
 obj_io.py      → Leitura e escrita de arquivos Wavefront .obj
 ```
 
@@ -28,7 +27,7 @@ Hierarquia de classes:
 GraphicObject (classe base)
 ├── Point       → coordenada única (x, y)
 ├── Line        → dois pontos
-├── Wireframe   → lista de pontos conectados (polígono, com atributo filled)
+├── Wireframe   → lista de pontos conectados (polígono)
 └── Window      → retângulo da window (drawable=False)
 ```
 
@@ -64,27 +63,12 @@ Pipeline SCN (Sistema de Coordenadas Normalizado):
 - `save_obj(filepath, display_file)`: salva todos os objetos do display file em formato Wavefront .obj, com cores em arquivo .mtl associado
 - `load_obj(filepath)`: carrega objetos de um arquivo .obj e retorna lista de GraphicObjects
 
-### clipping.py
-
-Algoritmos de clipping que operam em coordenadas SCN (normalizadas). A janela de clipping é ligeiramente menor que [-1, 1] para deixar uma margem visível ao redor da viewport (constante `MARGIN = 0.05`).
-
-Clipagem de pontos:
-- `clip_point(x, y)`: teste simples de pertinência `Xw_min <= X <= Xw_max` e `Yw_min <= Y <= Yw_max`
-
-Clipagem de retas (duas técnicas, selecionáveis por radio button):
-- `cohen_sutherland(x1, y1, x2, y2)`: usa region codes de 4 bits (LEFT=1, RIGHT=2, BOTTOM=4, TOP=8) para classificar rapidamente a reta como totalmente visível, invisível ou parcialmente visível. No caso parcial, calcula intersecções iterativamente com as bordas da janela usando coeficiente angular
-- `liang_barsky(x1, y1, x2, y2)`: usa representação paramétrica da reta com parâmetros p_k e q_k. Calcula ζ1 (max dos r_k para p<0, transição fora→dentro) e ζ2 (min dos r_k para p>0, transição dentro→fora). Rejeita se ζ1 > ζ2
-
-Clipagem de polígonos:
-- `sutherland_hodgman(polygon)`: processa todos os vértices do polígono sequencialmente contra cada aresta da janela (LEFT, RIGHT, BOTTOM, TOP). Para cada par de vértices adjacentes, aplica 4 regras: out→in salva intersecção + vértice, in→in salva vértice, in→out salva intersecção, out→out não salva nada
-
 ### main.py
 
 - Cria a window (600x600) e o display file
 - Painel esquerdo: lista de objetos, controles de pan/zoom/rotação/reset, campo de step (%)
-- Radio buttons para seleção do algoritmo de clipagem de retas (Cohen-Sutherland / Liang-Barsky)
-- Canvas de 800x800 com viewport interna menor (margem de 5%) e moldura vermelha para visualização do clipping
-- Dialog para adicionar objetos (Point, Line, Wireframe) com abas, seleção de cor e opção de preenchimento para wireframes
+- Canvas (viewport) de 800x800 com borda vermelha
+- Dialog para adicionar objetos (Point, Line, Wireframe) com abas e seleção de cor
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
 - Dialog de transformações com lista de operações pendentes
@@ -93,23 +77,10 @@ Clipagem de polígonos:
 ## Pipeline de visualização
 
 ```
-Coordenadas do mundo → scn_matrix(window) → Coordenadas SCN [-1,1] → Clipping (em SCN) → scn_to_viewport → Pixels
+Coordenadas do mundo → scn_matrix(window) → Coordenadas SCN [-1,1] → scn_to_viewport → Pixels
 ```
 
-A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na posição, zoom e rotação da window. As coordenadas do mundo nunca são alteradas pela navegação da window. A transformada de viewport é aplicada apenas aos objetos resultantes do clipping.
-
-## Clipping
-
-O clipping é realizado em coordenadas SCN, após a normalização e antes da transformação de viewport. A janela de clipping é definida como `[-0.90, -0.90, 0.90, 0.90]` (margem de 5% em cada lado), de modo que a viewport é menor que o canvas — a moldura vermelha ao redor torna erros de clipping imediatamente visíveis.
-
-Técnicas implementadas:
-- **Pontos**: teste de pertinência no retângulo de clipping
-- **Retas**: Cohen-Sutherland e Liang-Barsky (intercambiáveis via radio button no painel)
-- **Polígonos**: Sutherland-Hodgman (processa os vértices contra cada aresta da janela)
-
-## Polígonos preenchidos
-
-O usuário escolhe se um polígono (wireframe) é em modelo de arame ou preenchido no momento da criação, via checkbox "Filled" na aba Wireframe do diálogo de adição. Polígonos preenchidos usam `canvas.create_polygon()` do Tkinter com preenchimento sólido na cor do objeto. O clipping de Sutherland-Hodgman é aplicado normalmente — o polígono clipado resultante é então desenhado preenchido.
+A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na posição, zoom e rotação da window. As coordenadas do mundo nunca são alteradas pela navegação da window.
 
 ## Transformações 2D
 
@@ -146,20 +117,3 @@ A window pode ser rotacionada pelo campo de ângulo e botões de rotação no pa
 - Ponto: `x, y` (ex: `100, 200`)
 - Linha: `(x1,y1),(x2,y2)` (ex: `(0,0),(100,100)`)
 - Wireframe: `(x1,y1),(x2,y2),(x3,y3),...` (ex: `(0,0),(100,0),(100,100),(0,100)`)
-
-## Casos de teste para clipping
-
-| Teste | Tipo | Entrada | Comportamento esperado |
-|---|---|---|---|
-| Ponto dentro | Point | `0, 0` | Aparece no centro |
-| Ponto fora | Point | `500, 500` | Não aparece; zoom out até aparecer |
-| Linha parcial | Line | `(0,0),(500,500)` | Trecho visível termina na moldura vermelha |
-| Linha fora | Line | `(400,400),(500,500)` | Não aparece; zoom out até aparecer |
-| Linha diagonal | Line | `(-500,-500),(500,500)` | Clipada em ambas as pontas |
-| Linha horizontal | Line | `(-500,0),(500,0)` | Caso especial m=0 |
-| Linha vertical | Line | `(0,-500),(0,500)` | Caso especial m=∞ |
-| Wireframe parcial | Wireframe | `(200,200),(400,200),(400,400),(200,400)` | Canto cortado pela janela |
-| Wireframe preenchido | Wireframe (filled) | `(-100,-100),(100,-100),(100,100),(-100,100)` | Quadrado preenchido |
-| Wireframe fill+clip | Wireframe (filled) | `(100,100),(400,100),(400,400),(100,400)` | Preenchimento parcial |
-| Polígono côncavo | Wireframe | `(-200,-200),(200,-200),(200,0),(0,0),(0,200),(-200,200)` | Forma de L |
-| Window rotacionada | Qualquer | Rotacione a window | Clipping acompanha rotação |
