@@ -105,12 +105,12 @@ O clipping é realizado em coordenadas SCN, após a normalização e antes da tr
 Técnicas implementadas:
 - **Pontos**: teste de pertinência no retângulo de clipping
 - **Retas**: Cohen-Sutherland e Liang-Barsky (intercambiáveis via radio button no painel)
-- **Polígonos**: Sutherland-Hodgman (processa os vértices contra cada aresta da janela)
+- **Polígonos preenchidos**: Sutherland-Hodgman (processa os vértices contra cada aresta da janela, fechando o polígono na borda de clipping)
+- **Wireframes (não preenchidos)**: cada aresta é clipada individualmente como linha (usando o algoritmo selecionado no radio button), evitando arestas falsas ao longo da borda de clipping
 
 ## Polígonos preenchidos
 
 O usuário escolhe se um polígono (wireframe) é em modelo de arame ou preenchido no momento da criação, via checkbox "Filled" na aba Wireframe do diálogo de adição. Polígonos preenchidos usam `canvas.create_polygon()` do Tkinter com preenchimento sólido na cor do objeto. O clipping de Sutherland-Hodgman é aplicado normalmente — o polígono clipado resultante é então desenhado preenchido.
-
 ## Transformações 2D
 
 O usuário seleciona um objeto na lista, clica em "Transform" e pode adicionar múltiplas transformações a uma lista pendente. Ao clicar "Apply", todas são compostas em uma única matriz e aplicadas de uma vez.
@@ -147,19 +147,3 @@ A window pode ser rotacionada pelo campo de ângulo e botões de rotação no pa
 - Linha: `(x1,y1),(x2,y2)` (ex: `(0,0),(100,100)`)
 - Wireframe: `(x1,y1),(x2,y2),(x3,y3),...` (ex: `(0,0),(100,0),(100,100),(0,100)`)
 
-## Casos de teste para clipping
-
-| Teste | Tipo | Entrada | Comportamento esperado |
-|---|---|---|---|
-| Ponto dentro | Point | `0, 0` | Aparece no centro |
-| Ponto fora | Point | `500, 500` | Não aparece; zoom out até aparecer |
-| Linha parcial | Line | `(0,0),(500,500)` | Trecho visível termina na moldura vermelha |
-| Linha fora | Line | `(400,400),(500,500)` | Não aparece; zoom out até aparecer |
-| Linha diagonal | Line | `(-500,-500),(500,500)` | Clipada em ambas as pontas |
-| Linha horizontal | Line | `(-500,0),(500,0)` | Caso especial m=0 |
-| Linha vertical | Line | `(0,-500),(0,500)` | Caso especial m=∞ |
-| Wireframe parcial | Wireframe | `(200,200),(400,200),(400,400),(200,400)` | Canto cortado pela janela |
-| Wireframe preenchido | Wireframe (filled) | `(-100,-100),(100,-100),(100,100),(-100,100)` | Quadrado preenchido |
-| Wireframe fill+clip | Wireframe (filled) | `(100,100),(400,100),(400,400),(100,400)` | Preenchimento parcial |
-| Polígono côncavo | Wireframe | `(-200,-200),(200,-200),(200,0),(0,0),(0,200),(-200,200)` | Forma de L |
-| Window rotacionada | Qualquer | Rotacione a window | Clipping acompanha rotação |

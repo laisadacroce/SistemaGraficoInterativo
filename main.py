@@ -9,7 +9,7 @@ from transform import (scn_to_viewport, scn_matrix, apply_transform,
                         rotation_around_point_matrix)
 from obj_io import save_obj, load_obj
 from clipping import (clip_point, cohen_sutherland, liang_barsky,
-                       sutherland_hodgman, MARGIN)
+                       sutherland_hodgman, CLIP_MIN, CLIP_MAX)
 
 window = Window(-300, -300, 300, 300)
 display_file = DisplayFile(window)
@@ -121,21 +121,22 @@ def redraw():
     # Recalculate SCN coordinates for all objects
     display_file.update_scn(scn_matrix)
 
-    # Viewport com margem — menor que o canvas para visualizar clipping.
-    # Usa winfo_reqwidth como fallback pois winfo_width retorna 1
-    # antes do primeiro layout do Tkinter.
+    # O viewport mapeia o SCN inteiro [-1, 1] para o canvas inteiro.
+    # A moldura vermelha mostra visualmente onde o clipping corta
+    # (em [-0.90, 0.90] no SCN), servindo como ferramenta de debug.
     cw = canvas.winfo_width()
     ch = canvas.winfo_height()
     if cw <= 1:
         cw = canvas.winfo_reqwidth()
     if ch <= 1:
         ch = canvas.winfo_reqheight()
-    margin_x = int(cw * MARGIN)
-    margin_y = int(ch * MARGIN)
-    vp = (margin_x, margin_y, cw - margin_x, ch - margin_y)
+    vp = (0, 0, cw, ch)
 
-    # Desenhar moldura vermelha ao redor da viewport
-    canvas.create_rectangle(vp[0], vp[1], vp[2], vp[3],
+    # Desenhar moldura vermelha na posição correspondente ao clipping
+    # CLIP_MIN/MAX em SCN mapeados para pixels
+    mx1, my1 = scn_to_viewport(CLIP_MIN, CLIP_MAX, vp)  # top-left
+    mx2, my2 = scn_to_viewport(CLIP_MAX, CLIP_MIN, vp)  # bottom-right
+    canvas.create_rectangle(mx1, my1, mx2, my2,
                             outline="red", width=2)
 
     algo = clip_algorithm.get()
@@ -167,27 +168,29 @@ def redraw():
                     canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
 
         elif obj.object_type == "wireframe":
-            # Clipagem de polígonos — Sutherland-Hodgman
-            clipped = sutherland_hodgman(obj.normalized_coords)
-            if clipped:
-                # Converter coordenadas clipadas para viewport
-                vp_points = [scn_to_viewport(x, y, vp) for x, y in clipped]
-
-                if obj.filled:
-                    # Polígono preenchido
-                    flat = []
-                    for px, py in vp_points:
-                        flat.extend([px, py])
+            if obj.filled:
+                # Polígono preenchido — Sutherland-Hodgman (precisa fechar)
+                clipped = sutherland_hodgman(obj.normalized_coords)
+                if clipped:
+                    vp_points = [scn_to_viewport(x, y, vp) for x, y in clipped]
                     if len(vp_points) >= 3:
+                        flat = []
+                        for px, py in vp_points:
+                            flat.extend([px, py])
                         canvas.create_polygon(*flat, fill=color,
                                               outline=color)
-                else:
-                    # Wireframe — desenhar arestas
-                    for i in range(len(vp_points)):
-                        p1 = vp_points[i]
-                        p2 = vp_points[(i + 1) % len(vp_points)]
-                        canvas.create_line(p1[0], p1[1], p2[0], p2[1],
-                                           fill=color)
+            else:
+                # Wireframe — clipa cada aresta individualmente como linha
+                line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
+                coords = obj.normalized_coords
+                for i in range(len(coords)):
+                    x1, y1 = coords[i]
+                    x2, y2 = coords[(i + 1) % len(coords)]
+                    result = line_clip(x1, y1, x2, y2)
+                    if result:
+                        sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
+                        sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
+                        canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
 
 # ── Add object dialog ────────────────────────────────────
 
@@ -263,6 +266,8 @@ def open_add_object_dialog():
     def on_ok():
         name = name_entry.get().strip()
         if not name:
+            messagebox.showwarning("Missing name",
+                "Please enter a name for the object.", parent=dialog)
             return
 
         if display_file.has_name(name):
@@ -275,18 +280,30 @@ def open_add_object_dialog():
 
         try:
             if tab == 0: # Point
-                coords = list(eval(point_entry.get()))
-                obj = Point(name, coords[0], coords[1])
+                # Espera: (x, y)
+                raw = point_entry.get().strip()
+                coords = list(eval(raw))
+                if len(coords) != 2 or not all(isinstance(c, (int, float)) for c in coords):
+                    raise ValueError
+                obj = Point(name, float(coords[0]), float(coords[1]))
 
             elif tab == 1: # Line
-                coords = list(eval(line_entry.get()))
-                p1 = Point("", coords[0][0], coords[0][1])
-                p2 = Point("", coords[1][0], coords[1][1])
+                # Espera: (x1,y1),(x2,y2)
+                raw = line_entry.get().strip()
+                coords = list(eval(raw))
+                if len(coords) != 2:
+                    raise ValueError
+                p1 = Point("", float(coords[0][0]), float(coords[0][1]))
+                p2 = Point("", float(coords[1][0]), float(coords[1][1]))
                 obj = Line(name, p1, p2)
 
             elif tab == 2: # Wireframe
-                coords = list(eval(wireframe_entry.get()))
-                points = [Point("", c[0], c[1]) for c in coords]
+                # Espera: (x1,y1),(x2,y2),(x3,y3),...
+                raw = wireframe_entry.get().strip()
+                coords = list(eval(raw))
+                if len(coords) < 3:
+                    raise ValueError
+                points = [Point("", float(c[0]), float(c[1])) for c in coords]
                 obj = Wireframe(name, points, filled=filled_var.get())
         except Exception:
             messagebox.showerror("Invalid input",
