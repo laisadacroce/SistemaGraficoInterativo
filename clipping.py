@@ -179,6 +179,37 @@ def liang_barsky(x1, y1, x2, y2):
     return (x1c, y1c, x2c, y2c)
 
 
+# ── Clipping de curvas ──────────────────────────────────
+
+def clip_curve(curve_points):
+    """Clipa uma curva 2D discretizada aplicando point clipping em cada
+    amostra e agrupando trechos contíguos que estão dentro da janela.
+
+    Conforme slide 5.6 'Comentários: Clipping': a vantagem das blending
+    functions é que podemos verificar cada ponto discretizado com
+    point clipping. A curva pode sair e voltar a entrar na janela
+    várias vezes, gerando múltiplos trechos visíveis.
+
+    curve_points: lista de (x, y) em SCN.
+    Retorna lista de sub-trechos, onde cada sub-trecho é uma lista
+    contígua de pontos visíveis."""
+    segments = []
+    current = []
+
+    for x, y in curve_points:
+        if clip_point(x, y):
+            current.append((x, y))
+        else:
+            if current:
+                segments.append(current)
+                current = []
+
+    if current:
+        segments.append(current)
+
+    return segments
+
+
 # ── Sutherland-Hodgman (polígonos) ──────────────────────
 
 def sutherland_hodgman(polygon):

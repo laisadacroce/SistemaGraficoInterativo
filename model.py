@@ -107,6 +107,118 @@ class Wireframe(GraphicObject):
         return segments
 
 
+class Curve2D(GraphicObject):
+    """Curva 2D formada por uma ou mais curvas cúbicas de Bézier
+    encadeadas com continuidade G(0).
+
+    Estrutura dos pontos de controle:
+      - 4 pontos       → 1 curva  (P1, P2, P3, P4)
+      - 7 pontos       → 2 curvas (P1..P4, P4..P7)
+      - 3k + 1 pontos  → k curvas encadeadas compartilhando extremos
+
+    Cada curva cúbica é avaliada discretizando t em STEPS passos e
+    calculando P(t) = T * M_B * G_B para cada um, conforme Eq. 5.21/5.22.
+    A continuidade G(0) vem naturalmente da sobreposição do último ponto
+    de uma curva com o primeiro da próxima."""
+
+    STEPS = 100  # número de amostras por curva cúbica
+
+    # Matriz de Bézier (M_B) conforme Eq. 5.22 dos slides
+    M_B = [
+        [-1,  3, -3, 1],
+        [ 3, -6,  3, 0],
+        [-3,  3,  0, 0],
+        [ 1,  0,  0, 0],
+    ]
+
+    def __init__(self, name, points, drawable=True):
+        coords = [p.coordinates[0] for p in points]
+        super().__init__(name, coords, drawable)
+
+    @property
+    def object_type(self):
+        return "curve"
+
+    @staticmethod
+    def valid_point_count(n):
+        """Retorna True se n é um número válido de pontos de controle:
+        n >= 4 e n ≡ 1 (mod 3)."""
+        return n >= 4 and (n - 1) % 3 == 0
+
+    def _generate_curve_points(self, control_coords):
+        """Percorre cada grupo de 4 pontos (compartilhando o último com
+        o próximo grupo) e gera os pontos discretizados da curva."""
+        all_points = []
+        n = len(control_coords)
+        if not self.valid_point_count(n):
+            return all_points
+
+        for i in range(0, n - 3, 3):
+            p1, p2, p3, p4 = control_coords[i:i + 4]
+            segment = self._bezier_segment(p1, p2, p3, p4)
+            # Evitar duplicar o ponto de junção entre curvas consecutivas
+            if all_points:
+                segment = segment[1:]
+            all_points.extend(segment)
+        return all_points
+
+    def _bezier_segment(self, p1, p2, p3, p4):
+        """Gera STEPS+1 pontos discretizados de uma única curva cúbica."""
+        points = []
+        for i in range(self.STEPS + 1):
+            t = i / self.STEPS
+            points.append(self._bezier_point(t, p1, p2, p3, p4))
+        return points
+
+    def _bezier_point(self, t, p1, p2, p3, p4):
+        """Calcula (x, y) do ponto na curva de Bézier no parâmetro t,
+        aplicando P(t) = T * M_B * G_B para as coordenadas x e y
+        separadamente (Eq. 5.21/5.22 dos slides).
+
+        O produto T * M_B resulta nas 4 blending functions de Bézier
+        (polinômios de Bernstein):
+          b0(t) = (1-t)^3
+          b1(t) = 3t(1-t)^2
+          b2(t) = 3t^2(1-t)
+          b3(t) = t^3
+        O ponto final é a combinação linear dos pontos de controle
+        ponderada pelas blending functions."""
+        one_minus_t = 1 - t
+        b0 = one_minus_t ** 3
+        b1 = 3 * t * one_minus_t ** 2
+        b2 = 3 * t ** 2 * one_minus_t
+        b3 = t ** 3
+
+        x = b0 * p1[0] + b1 * p2[0] + b2 * p3[0] + b3 * p4[0]
+        y = b0 * p1[1] + b1 * p2[1] + b2 * p3[1] + b3 * p4[1]
+        return (x, y)
+
+    def draw_segments(self):
+        """Gera segmentos de reta conectando pontos consecutivos da curva
+        em coordenadas do mundo, baseados nos pontos de controle atuais."""
+        curve_pts = self._generate_curve_points(self.coordinates)
+        segments = []
+        for i in range(len(curve_pts) - 1):
+            segments.append((curve_pts[i], curve_pts[i + 1]))
+        return segments
+
+    def draw_segments_scn(self):
+        """Gera segmentos de reta conectando pontos consecutivos da curva
+        em coordenadas SCN. Como transformações afins (incluindo SCN) são
+        preservadas pelas blending functions, aplicamos o pipeline sobre
+        os pontos de controle normalizados."""
+        curve_pts = self._generate_curve_points(self.normalized_coords)
+        segments = []
+        for i in range(len(curve_pts) - 1):
+            segments.append((curve_pts[i], curve_pts[i + 1]))
+        return segments
+
+    def curve_points_scn(self):
+        """Retorna a lista de pontos discretizados da curva em SCN.
+        Usado pelo clipping de curvas (point clipping em cada amostra)."""
+        return self._generate_curve_points(self.normalized_coords)
+
+
 class Window(GraphicObject):
     """The visible region of the world. Lives in the display file as the
     first element (drawable=False) so that transformations can be applied

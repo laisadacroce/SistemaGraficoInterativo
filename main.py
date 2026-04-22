@@ -1,7 +1,7 @@
 import math
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
-from model import DisplayFile, Window, Point, Line, Wireframe
+from model import DisplayFile, Window, Point, Line, Wireframe, Curve2D
 from transform import (scn_to_viewport, scn_matrix, apply_transform,
                         compose_matrices, translation_matrix,
                         natural_scaling_matrix, rotation_matrix,
@@ -9,7 +9,8 @@ from transform import (scn_to_viewport, scn_matrix, apply_transform,
                         rotation_around_point_matrix)
 from obj_io import save_obj, load_obj
 from clipping import (clip_point, cohen_sutherland, liang_barsky,
-                       sutherland_hodgman, CLIP_MIN, CLIP_MAX)
+                       sutherland_hodgman, clip_curve,
+                       CLIP_MIN, CLIP_MAX)
 
 window = Window(-300, -300, 300, 300)
 display_file = DisplayFile(window)
@@ -167,6 +168,16 @@ def redraw():
                     sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
                     canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
 
+        elif obj.object_type == "curve":
+            # Clipagem de curvas — point clipping em cada amostra.
+            # Trechos contíguos visíveis viram linhas conectadas.
+            segments = clip_curve(obj.curve_points_scn())
+            for seg in segments:
+                for i in range(len(seg) - 1):
+                    sx1, sy1 = scn_to_viewport(seg[i][0], seg[i][1], vp)
+                    sx2, sy2 = scn_to_viewport(seg[i+1][0], seg[i+1][1], vp)
+                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
+
         elif obj.object_type == "wireframe":
             if obj.filled:
                 # Polígono preenchido — Sutherland-Hodgman (precisa fechar)
@@ -238,10 +249,12 @@ def open_add_object_dialog():
     point_tab     = tk.Frame(notebook)
     line_tab      = tk.Frame(notebook)
     wireframe_tab = tk.Frame(notebook)
+    curve_tab     = tk.Frame(notebook)
 
     notebook.add(point_tab,     text="Point")
     notebook.add(line_tab,      text="Line")
     notebook.add(wireframe_tab, text="Wireframe")
+    notebook.add(curve_tab,     text="Curve")
 
     # Point tab
     tk.Label(point_tab, text="Coordinates:").pack(pady=5)
@@ -262,6 +275,13 @@ def open_add_object_dialog():
     wireframe_entry.pack(pady=5)
     filled_var = tk.BooleanVar(value=False)
     tk.Checkbutton(wireframe_tab, text="Filled", variable=filled_var).pack(pady=5)
+
+    # Curve tab
+    tk.Label(curve_tab, text="Bézier Curve (G(0) continuity)").pack(pady=5)
+    tk.Label(curve_tab, text="Points: 4, 7, 10, 13, ... (3k+1)").pack()
+    tk.Label(curve_tab, text="(x1,y1),(x2,y2),(x3,y3),(x4,y4),...").pack()
+    curve_entry = tk.Entry(curve_tab, width=30)
+    curve_entry.pack(pady=5)
 
     def on_ok():
         name = name_entry.get().strip()
@@ -305,6 +325,16 @@ def open_add_object_dialog():
                     raise ValueError
                 points = [Point("", float(c[0]), float(c[1])) for c in coords]
                 obj = Wireframe(name, points, filled=filled_var.get())
+
+            elif tab == 3: # Curve
+                coords = list(eval(curve_entry.get()))
+                if not Curve2D.valid_point_count(len(coords)):
+                    messagebox.showerror("Invalid point count",
+                        f"A curva precisa de 4, 7, 10, 13, ... pontos (3k+1). "
+                        f"Recebido: {len(coords)}", parent=dialog)
+                    return
+                points = [Point("", c[0], c[1]) for c in coords]
+                obj = Curve2D(name, points)
         except Exception:
             messagebox.showerror("Invalid input",
                 "Could not parse coordinates. Check the format.", parent=dialog)

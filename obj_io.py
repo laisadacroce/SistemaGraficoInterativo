@@ -1,10 +1,11 @@
 """Wavefront .obj file reader/writer for the SGI display file.
 
-Supports points (p), lines (l), and wireframes (f) with colors
-stored in an associated .mtl material library file."""
+Supports points (p), lines (l), wireframes (f) and Bézier curves
+(custom `curv` directive) with colors stored in an associated .mtl
+material library file."""
 
 import os
-from model import Point, Line, Wireframe
+from model import Point, Line, Wireframe, Curve2D
 
 
 def save_obj(filepath, display_file):
@@ -49,6 +50,10 @@ def save_obj(filepath, display_file):
                 f.write(f"l {indices[0]} {indices[1]}\n")
             elif obj.object_type == "wireframe":
                 f.write(f"f {' '.join(str(i) for i in indices)}\n")
+            elif obj.object_type == "curve":
+                # Bézier curve — save control points under custom `curv`
+                # directive so we can reconstruct it on load.
+                f.write(f"curv {' '.join(str(i) for i in indices)}\n")
             f.write("\n")
 
     # Write .mtl file
@@ -124,6 +129,15 @@ def load_obj(filepath):
                 obj = Wireframe(current_name or "wireframe", points)
                 obj.color = current_color
                 objects.append(obj)
+
+            elif keyword == "curv":
+                # Bézier curve — custom directive with control point indices
+                indices = [int(p) for p in parts[1:]]
+                if Curve2D.valid_point_count(len(indices)):
+                    points = [Point("", *vertices[i]) for i in indices]
+                    obj = Curve2D(current_name or "curve", points)
+                    obj.color = current_color
+                    objects.append(obj)
 
     return objects
 

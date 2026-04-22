@@ -29,10 +29,12 @@ GraphicObject (classe base)
 ├── Point       → coordenada única (x, y)
 ├── Line        → dois pontos
 ├── Wireframe   → lista de pontos conectados (polígono, com atributo filled)
+├── Curve2D     → curva(s) de Bézier encadeadas com continuidade G(0)
 └── Window      → retângulo da window (drawable=False)
 ```
 
 - **GraphicObject**: classe base com `name`, `coordinates`, `drawable`, `color`, `normalized_coords` e `center()`. Define a interface `object_type`, `draw_segments()` e `draw_segments_scn()` que cada subclasse implementa.
+- **Curve2D**: curva formada por uma ou mais curvas cúbicas de Bézier encadeadas com continuidade G(0). Usa a matriz de Bézier `M_B` e as blending functions (polinômios de Bernstein) para calcular cada ponto na curva. Aceita `3k + 1` pontos de controle (com k ≥ 1), onde cada grupo de 4 pontos forma uma curva e o último ponto é compartilhado com o primeiro da próxima. A discretização usa `STEPS = 100` amostras por curva.
 - **Window**: primeiro elemento do display file, não é desenhada. Encapsula `pan()`, `zoom()`, `rotate()` e `reset()`. Possui vetor view-up (`vup`) e ângulo acumulado para rotação.
 - **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida. Método `update_scn()` recalcula coordenadas normalizadas de todos os objetos.
 
@@ -78,13 +80,16 @@ Clipagem de retas (duas técnicas, selecionáveis por radio button):
 Clipagem de polígonos:
 - `sutherland_hodgman(polygon)`: processa todos os vértices do polígono sequencialmente contra cada aresta da janela (LEFT, RIGHT, BOTTOM, TOP). Para cada par de vértices adjacentes, aplica 4 regras: out→in salva intersecção + vértice, in→in salva vértice, in→out salva intersecção, out→out não salva nada
 
+Clipagem de curvas:
+- `clip_curve(curve_points)`: aplica point clipping em cada amostra da curva discretizada. Como uma curva pode sair e voltar a entrar na janela várias vezes, retorna uma lista de sub-trechos (cada um é uma lista contígua de pontos visíveis). Segue a sugestão do slide 5.6 ("verifico se o fim do próximo segmento t/k está dentro do window usando clipping de pontos")
+
 ### main.py
 
 - Cria a window (600x600) e o display file
 - Painel esquerdo: lista de objetos, controles de pan/zoom/rotação/reset, campo de step (%)
 - Radio buttons para seleção do algoritmo de clipagem de retas (Cohen-Sutherland / Liang-Barsky)
 - Canvas de 800x800 com viewport interna menor (margem de 5%) e moldura vermelha para visualização do clipping
-- Dialog para adicionar objetos (Point, Line, Wireframe) com abas, seleção de cor e opção de preenchimento para wireframes
+- Dialog para adicionar objetos (Point, Line, Wireframe, Curve) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
 - Dialog de transformações com lista de operações pendentes
@@ -107,6 +112,7 @@ Técnicas implementadas:
 - **Retas**: Cohen-Sutherland e Liang-Barsky (intercambiáveis via radio button no painel)
 - **Polígonos preenchidos**: Sutherland-Hodgman (processa os vértices contra cada aresta da janela, fechando o polígono na borda de clipping)
 - **Wireframes (não preenchidos)**: cada aresta é clipada individualmente como linha (usando o algoritmo selecionado no radio button), evitando arestas falsas ao longo da borda de clipping
+- **Curvas**: point clipping em cada amostra discretizada (conforme slide 5.6)
 
 ## Polígonos preenchidos
 
@@ -146,4 +152,4 @@ A window pode ser rotacionada pelo campo de ângulo e botões de rotação no pa
 - Ponto: `x, y` (ex: `100, 200`)
 - Linha: `(x1,y1),(x2,y2)` (ex: `(0,0),(100,100)`)
 - Wireframe: `(x1,y1),(x2,y2),(x3,y3),...` (ex: `(0,0),(100,0),(100,100),(0,100)`)
-
+- Curva: `(x1,y1),(x2,y2),...` com 4, 7, 10, 13, ... pontos (ex: 4 pontos `(0,0),(50,150),(100,150),(150,0)`; 7 pontos encadeiam duas curvas com G(0)).
