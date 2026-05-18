@@ -9,7 +9,7 @@ from transform import (scn_to_viewport, apply_transform,
                         rotation_around_center_matrix,
                         rotation_around_point_matrix)
 import transform3d as t3d
-from obj_io import save_obj, load_obj
+from obj_io import save_obj, load_obj, load_obj_3d
 from clipping import (clip_point, cohen_sutherland, liang_barsky,
                        sutherland_hodgman, clip_curve,
                        CLIP_MIN, CLIP_MAX)
@@ -155,6 +155,60 @@ tk.Label(camera_frame, text="(Pan/Zoom/Rotate acima também\n"
          "operam a câmera no espaço 3D)", bg="lightgray",
          font=("", 7)).pack(pady=2)
 
+# Section: projection mode (parallel / perspective)
+projection_frame = tk.LabelFrame(panel, text="Projection", bg="lightgray")
+projection_frame.pack(fill=tk.X, pady=5)
+
+projection_var = tk.StringVar(value="parallel")
+
+def set_projection_mode():
+    window.projection_mode = projection_var.get()
+    redraw()
+
+tk.Radiobutton(projection_frame, text="Parallel (orthogonal)",
+               variable=projection_var, value="parallel", bg="lightgray",
+               command=set_projection_mode).pack(anchor="w")
+tk.Radiobutton(projection_frame, text="Perspective",
+               variable=projection_var, value="perspective", bg="lightgray",
+               command=set_projection_mode).pack(anchor="w")
+
+cop_frame = tk.Frame(projection_frame, bg="lightgray")
+cop_frame.pack(fill=tk.X, padx=5, pady=2)
+tk.Label(cop_frame, text="COP dist:", bg="lightgray").pack(side=tk.LEFT)
+cop_entry = tk.Entry(cop_frame, width=7)
+cop_entry.insert(0, str(int(window.cop_distance)))
+cop_entry.pack(side=tk.LEFT, padx=2)
+
+def refresh_cop_entry():
+    cop_entry.delete(0, tk.END)
+    cop_entry.insert(0, str(int(window.cop_distance)))
+
+def set_cop_distance():
+    """Define a distância do Centro de Projeção ao plano de projeção."""
+    try:
+        d = float(cop_entry.get())
+        if d > 0:
+            window.cop_distance = d
+            redraw()
+    except ValueError:
+        pass
+
+tk.Button(cop_frame, text="Set", command=set_cop_distance).pack(side=tk.LEFT)
+
+def scale_cop(factor):
+    """Aproxima/afasta o COP: menor distância = grande angular,
+    maior distância = teleobjetiva."""
+    window.cop_distance = max(1.0, window.cop_distance * factor)
+    refresh_cop_entry()
+    redraw()
+
+cop_btn_frame = tk.Frame(projection_frame, bg="lightgray")
+cop_btn_frame.pack(pady=2)
+tk.Button(cop_btn_frame, text="Wide angle",
+          command=lambda: scale_cop(1 / 1.5)).pack(side=tk.LEFT, padx=2)
+tk.Button(cop_btn_frame, text="Telephoto",
+          command=lambda: scale_cop(1.5)).pack(side=tk.LEFT, padx=2)
+
 # Section: Clipping algorithm selection
 clip_frame = tk.LabelFrame(panel, text="Line Clipping", bg="lightgray")
 clip_frame.pack(fill=tk.X, pady=5)
@@ -175,9 +229,10 @@ canvas.pack(side=tk.LEFT, padx=10, pady=10)
 def redraw():
     canvas.delete("all")
 
-    # Projeção Paralela Ortogonal: recalcula as coordenadas SCN de
-    # todos os objetos (2D e 3D) a partir da câmera 3D (window).
-    display_file.project(t3d.parallel_projection_matrix)
+    # Projeção (paralela ortogonal ou em perspectiva): recalcula as
+    # coordenadas SCN de todos os objetos (2D e 3D) a partir da
+    # câmera 3D (window).
+    display_file.project(window)
 
     # O viewport mapeia o SCN inteiro [-1, 1] para o canvas inteiro.
     # A moldura vermelha mostra visualmente onde o clipping corta
@@ -203,7 +258,7 @@ def redraw():
         color = obj.color
 
         if obj.object_type == "point":
-            if obj.normalized_coords:
+            if obj.normalized_coords and obj.normalized_coords[0] is not None:
                 x, y = obj.normalized_coords[0]
                 # Clipagem de pontos
                 if clip_point(x, y):
@@ -212,7 +267,9 @@ def redraw():
                                        fill=color, outline=color)
 
         elif obj.object_type == "line":
-            if len(obj.normalized_coords) >= 2:
+            if (len(obj.normalized_coords) >= 2
+                    and obj.normalized_coords[0] is not None
+                    and obj.normalized_coords[1] is not None):
                 x1, y1 = obj.normalized_coords[0]
                 x2, y2 = obj.normalized_coords[1]
                 # Clipagem de retas — algoritmo selecionado pelo usuário
@@ -229,7 +286,10 @@ def redraw():
             # Clipagem de curvas (Bézier e B-Spline) — point clipping
             # em cada amostra discretizada.
             # Trechos contíguos visíveis viram linhas conectadas.
-            segments = clip_curve(obj.curve_points_scn())
+            if any(c is None for c in obj.normalized_coords):
+                segments = []  # ponto de controle atrás do COP
+            else:
+                segments = clip_curve(obj.curve_points_scn())
             for seg in segments:
                 for i in range(len(seg) - 1):
                     sx1, sy1 = scn_to_viewport(seg[i][0], seg[i][1], vp)
@@ -239,7 +299,10 @@ def redraw():
         elif obj.object_type == "wireframe":
             if obj.filled:
                 # Polígono preenchido — Sutherland-Hodgman (precisa fechar)
-                clipped = sutherland_hodgman(obj.normalized_coords)
+                if any(c is None for c in obj.normalized_coords):
+                    clipped = []  # vértice atrás do COP
+                else:
+                    clipped = sutherland_hodgman(obj.normalized_coords)
                 if clipped:
                     vp_points = [scn_to_viewport(x, y, vp) for x, y in clipped]
                     if len(vp_points) >= 3:
@@ -253,8 +316,12 @@ def redraw():
                 line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
                 coords = obj.normalized_coords
                 for i in range(len(coords)):
-                    x1, y1 = coords[i]
-                    x2, y2 = coords[(i + 1) % len(coords)]
+                    p1 = coords[i]
+                    p2 = coords[(i + 1) % len(coords)]
+                    if p1 is None or p2 is None:
+                        continue  # vértice atrás do COP
+                    x1, y1 = p1
+                    x2, y2 = p2
                     result = line_clip(x1, y1, x2, y2)
                     if result:
                         sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
@@ -262,8 +329,9 @@ def redraw():
                         canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
 
         elif obj.object_type == "point3d":
-            # Ponto 3D — já projetado para SCN; clipagem de ponto
-            if obj.normalized_coords:
+            # Ponto 3D — já projetado para SCN; clipagem de ponto.
+            # normalized_coords[0] pode ser None se estiver atrás do COP.
+            if obj.normalized_coords and obj.normalized_coords[0] is not None:
                 x, y = obj.normalized_coords[0]
                 if clip_point(x, y):
                     sx, sy = scn_to_viewport(x, y, vp)
@@ -271,10 +339,18 @@ def redraw():
                                        fill=color, outline=color)
 
         elif obj.object_type == "object3d":
-            # Objeto 3D — cada segmento de reta já projetado é clipado
-            # individualmente como linha (algoritmo selecionado).
+            # Objeto 3D — cada segmento de reta é projetado a partir das
+            # coordenadas de view (com clipping de near-plane na
+            # perspectiva) e depois clipado em 2D como linha.
             line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
-            for (x1, y1), (x2, y2) in obj.draw_segments_scn():
+            vc = obj.view_coords
+            for i, j in obj.segments:
+                if i >= len(vc) or j >= len(vc):
+                    continue
+                seg = t3d.project_view_segment(vc[i], vc[j], window)
+                if seg is None:
+                    continue
+                (x1, y1), (x2, y2) = seg
                 result = line_clip(x1, y1, x2, y2)
                 if result:
                     sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
@@ -754,10 +830,37 @@ def do_load_obj():
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
+def do_load_obj_3d():
+    filepath = filedialog.askopenfilename(
+        filetypes=[("Wavefront OBJ", "*.obj")],
+        title="Load 3D wireframe from .obj")
+    if filepath:
+        try:
+            objects = load_obj_3d(filepath)
+            if not objects:
+                messagebox.showinfo("Nothing loaded",
+                    "Nenhum objeto 3D (faces/linhas) encontrado no arquivo.")
+                return
+            for obj in objects:
+                base = obj.name or "object3d"
+                name = base
+                k = 1
+                while display_file.has_name(name):
+                    name = f"{base}_{k}"
+                    k += 1
+                obj.name = name
+                display_file.add(obj)
+                object_listbox.insert(tk.END, str(obj))
+            redraw()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
 obj_frame = tk.Frame(panel, bg="lightgray")
 obj_frame.pack(fill=tk.X, pady=5)
 tk.Button(obj_frame, text="Save .obj", command=do_save_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 tk.Button(obj_frame, text="Load .obj", command=do_load_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+tk.Button(panel, text="Load 3D .obj (wireframe)",
+          command=do_load_obj_3d).pack(fill=tk.X, pady=2)
 
 # Forçar o layout do Tkinter antes do primeiro redraw
 root.update_idletasks()

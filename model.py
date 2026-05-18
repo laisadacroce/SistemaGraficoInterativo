@@ -11,7 +11,8 @@ class GraphicObject:
         self.coordinates = coordinates  # list of (x, y) tuples in world coords
         self.drawable = drawable
         self.color = color  # RGB hex color for drawing
-        self.normalized_coords = []  # SCN cache, computed by DisplayFile.update_scn()
+        self.normalized_coords = []  # SCN cache, computed by DisplayFile.project()
+        self.view_coords = []  # coordenadas 3D de view, computadas em project()
 
     @property
     def object_type(self):
@@ -456,6 +457,11 @@ class Window(GraphicObject):
         self._initial_vrp = (cx, cy, 0.0)
         self._initial_width = float(x_max - x_min)
         self._initial_height = float(y_max - y_min)
+        # Modo de projeção: 'parallel' (ortogonal) ou 'perspective'.
+        # cop_distance é a distância do COP ao plano de projeção:
+        # menor → grande angular; maior → teleobjetiva.
+        self.projection_mode = "parallel"
+        self.cop_distance = 800.0
         self.reset()
 
     @property
@@ -578,27 +584,29 @@ class DisplayFile:
         """Returns only objects that should be drawn (excludes the window)."""
         return [obj for obj in self._objects if obj.drawable]
 
-    def project(self, projection_matrix_func):
-        """Recalcula as coordenadas normalizadas (SCN) de todos os
-        objetos desenháveis aplicando a Projeção Paralela Ortogonal.
+    def project(self, window):
+        """Recalcula as coordenadas de view e as coordenadas
+        normalizadas (SCN) de todos os objetos desenháveis.
 
-        Recebe uma função que gera a matriz de projeção 4x4 a partir da
-        window (câmera 3D). Cada coordenada é tratada como ponto 3D —
-        objetos 2D usam z = 0 — e o resultado descarta z (projeção
-        ortogonal sobre o plano de visão)."""
-        matrix = projection_matrix_func(self.window)
+        Aplica a matriz de view (transladar o VRP para a origem e
+        alinhar o VPN ao eixo Z) e, em seguida, a projeção — paralela
+        ortogonal ou em perspectiva, conforme `window.projection_mode`.
+
+        Objetos 2D são tratados como pontos 3D com z = 0. Cada objeto
+        recebe `view_coords` (pontos 3D em coordenadas de view) e
+        `normalized_coords` (pontos 2D em SCN; None onde o ponto está
+        atrás do COP, situação possível só na perspectiva)."""
+        vmat = t3d.view_matrix(window)
         for obj in self.drawable_objects():
-            new_coords = []
+            view_coords = []
             for c in obj.coordinates:
                 x = c[0]
                 y = c[1]
                 z = c[2] if len(c) > 2 else 0.0
-                x_new = (x * matrix[0][0] + y * matrix[1][0]
-                         + z * matrix[2][0] + matrix[3][0])
-                y_new = (x * matrix[0][1] + y * matrix[1][1]
-                         + z * matrix[2][1] + matrix[3][1])
-                new_coords.append((x_new, y_new))
-            obj.normalized_coords = new_coords
+                view_coords.append(t3d.transform_point((x, y, z), vmat))
+            obj.view_coords = view_coords
+            obj.normalized_coords = [t3d.project_view_point(p, window)
+                                     for p in view_coords]
 
     def __iter__(self):
         return iter(self._objects)

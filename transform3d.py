@@ -282,3 +282,106 @@ def project_point(point, matrix):
     coordenada z (projeção ortogonal sobre o plano XY)."""
     xn, yn, _zn = transform_point(point, matrix)
     return (xn, yn)
+
+
+# ── Coordenadas de view ──────────────────────────────────
+
+def view_matrix(window):
+    """Matriz 4x4 que leva um ponto do mundo para as coordenadas de
+    view: VRP na origem e VPN alinhado ao eixo +Z.
+
+    O plano de projeção passa a ser o plano z = 0 e o VUP orienta o
+    eixo +Y. É a base comum das projeções paralela e perspectiva —
+    ao final, o VPN é (0, 0, 1)."""
+    vrp = window.vrp
+    align = align_to_z_matrix(window.vpn, up=window.vup)
+    return compose_matrices([
+        translation_matrix(-vrp[0], -vrp[1], -vrp[2]),
+        align,
+    ])
+
+
+# ── Projeção em Perspectiva ──────────────────────────────
+#
+# Após a matriz de view, o plano de projeção é z = 0 e o VPN é +Z.
+# O Centro de Projeção (COP) é virtual e fica ATRÁS do plano de
+# projeção, em z = -d, onde d = window.cop_distance.
+#
+# Um ponto (x, y, z) em coordenadas de view projeta-se sobre o plano
+# z = 0 pela reta que o liga ao COP. Por semelhança de triângulos:
+#       x_p = x · d / (z + d)        y_p = y · d / (z + d)
+#
+# Quando d → ∞ a perspectiva tende à projeção paralela. Reduzir d
+# aproxima o COP do plano e produz a distorção "grande angular";
+# aumentar d produz o efeito "teleobjetiva".
+
+# Plano near, logo à frente do COP, usado no clipping de perspectiva
+_NEAR_FACTOR = 0.001
+
+
+def _parallel_scn(p, window):
+    """Projeção paralela ortogonal de um ponto (coordenadas de view)
+    para o SCN: descarta z e normaliza pelo tamanho da window."""
+    return (p[0] / (window.win_width / 2.0),
+            p[1] / (window.win_height / 2.0))
+
+
+def _perspective_scn(p, window):
+    """Projeção em perspectiva de um ponto (coordenadas de view) para
+    o SCN. O COP está em z = -d (atrás do plano de projeção z = 0)."""
+    d = window.cop_distance
+    f = d / (p[2] + d)
+    return (p[0] * f / (window.win_width / 2.0),
+            p[1] * f / (window.win_height / 2.0))
+
+
+def project_view_point(p, window):
+    """Projeta um ponto 3D (em coordenadas de view) para o SCN 2D.
+
+    Devolve (x, y) ou None se o ponto está atrás do COP — caso só
+    possível na projeção em perspectiva."""
+    if window.projection_mode == "perspective":
+        d = window.cop_distance
+        if p[2] + d <= d * _NEAR_FACTOR:
+            return None
+        return _perspective_scn(p, window)
+    return _parallel_scn(p, window)
+
+
+def _clip_near_plane(a, b, window):
+    """Clipa um segmento (extremos em coordenadas de view) contra o
+    plano near, logo à frente do COP. Necessário porque pontos atrás
+    do COP não podem ser projetados em perspectiva.
+
+    Devolve o par de pontos visível ou None se o segmento está
+    inteiramente atrás do plano near."""
+    d = window.cop_distance
+    zn = -d + d * _NEAR_FACTOR   # plano near, imediatamente à frente do COP
+    za, zb = a[2], b[2]
+    in_a, in_b = za >= zn, zb >= zn
+    if in_a and in_b:
+        return (a, b)
+    if not in_a and not in_b:
+        return None
+    # O segmento cruza o plano near — calcula a intersecção
+    t = (zn - za) / (zb - za)
+    mid = (a[0] + t * (b[0] - a[0]),
+           a[1] + t * (b[1] - a[1]),
+           zn)
+    return (mid, b) if in_b else (a, mid)
+
+
+def project_view_segment(a, b, window):
+    """Projeta um segmento de reta (extremos em coordenadas de view)
+    para o SCN 2D, conforme o modo de projeção da window.
+
+    Para a perspectiva, faz o clipping de near-plane antes da divisão
+    perspectiva. Devolve ((x1,y1),(x2,y2)) em SCN ou None se o
+    segmento não é visível."""
+    if window.projection_mode == "perspective":
+        clipped = _clip_near_plane(a, b, window)
+        if clipped is None:
+            return None
+        a, b = clipped
+        return (_perspective_scn(a, window), _perspective_scn(b, window))
+    return (_parallel_scn(a, window), _parallel_scn(b, window))

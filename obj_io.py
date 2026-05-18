@@ -5,7 +5,7 @@ Supports points (p), lines (l), wireframes (f) and Bézier curves
 material library file."""
 
 import os
-from model import Point, Line, Wireframe, Curve2D, BSpline
+from model import Point, Line, Wireframe, Curve2D, BSpline, Point3D, Object3D
 
 
 def save_obj(filepath, display_file):
@@ -157,6 +157,88 @@ def load_obj(filepath):
                     obj = BSpline(current_name or "bspline", points)
                     obj.color = current_color
                     objects.append(obj)
+
+    return objects
+
+
+def load_obj_3d(filepath):
+    """Carrega objetos 3D em modelo de arame (Object3D) de um arquivo
+    Wavefront .obj.
+
+    Lê os vértices `v x y z` em 3D. Cada grupo `o` vira um Object3D;
+    as arestas (segmentos de reta) vêm das faces `f` — cada face é um
+    polígono fechado — e das linhas `l`. Lê cores do `.mtl` associado.
+
+    Usado para carregar modelos como paralelepípedos e mostrá-los em
+    perspectiva."""
+    global_verts = {}   # índice (1-based) -> (x, y, z)
+    materials = {}
+    groups = []         # lista de grupos {name, color, edges}
+    current = None
+    dir_path = os.path.dirname(filepath)
+
+    def new_group(name):
+        g = {"name": name, "color": "#000000", "edges": []}
+        groups.append(g)
+        return g
+
+    with open(filepath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            keyword = parts[0]
+
+            if keyword == "mtllib":
+                mtl_path = os.path.join(dir_path, " ".join(parts[1:]))
+                if os.path.exists(mtl_path):
+                    materials = _read_mtl(mtl_path)
+
+            elif keyword == "v":
+                idx = len(global_verts) + 1
+                z = float(parts[3]) if len(parts) > 3 else 0.0
+                global_verts[idx] = (float(parts[1]), float(parts[2]), z)
+
+            elif keyword == "o":
+                current = new_group(parts[1])
+
+            elif keyword == "usemtl":
+                if current is None:
+                    current = new_group("object3d")
+                if parts[1] in materials:
+                    current["color"] = materials[parts[1]]
+
+            elif keyword in ("f", "l"):
+                if current is None:
+                    current = new_group("object3d")
+                # índices podem vir na forma i/j/k — usa só o primeiro
+                idxs = [int(p.split("/")[0]) for p in parts[1:]]
+                # arestas entre vértices consecutivos
+                for k in range(len(idxs) - 1):
+                    current["edges"].append((idxs[k], idxs[k + 1]))
+                # face: fecha o polígono ligando o último ao primeiro
+                if keyword == "f" and len(idxs) > 2:
+                    current["edges"].append((idxs[-1], idxs[0]))
+
+    # Constrói um Object3D por grupo, remapeando os índices globais
+    # para índices locais (cada objeto guarda só os vértices que usa)
+    objects = []
+    for g in groups:
+        if not g["edges"]:
+            continue
+        local = []
+        remap = {}
+        for a, b in g["edges"]:
+            for gi in (a, b):
+                if gi not in remap:
+                    remap[gi] = len(local)
+                    local.append(global_verts[gi])
+        points = [Point3D("", x, y, z) for (x, y, z) in local]
+        segments = [(remap[a], remap[b]) for a, b in g["edges"]]
+        obj = Object3D(g["name"], points, segments)
+        obj.color = g["color"]
+        objects.append(obj)
 
     return objects
 

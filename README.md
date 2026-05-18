@@ -80,10 +80,11 @@ Transformações compostas:
 - `natural_scaling_matrix(sx, sy, sz, obj)`: escalonamento em torno do centro do objeto
 - `apply_transform_3d(obj, matrix)`: aplica uma matriz 4×4 a todas as coordenadas 3D de um objeto
 
-Projeção Paralela Ortogonal:
-- `parallel_projection_matrix(window)`: gera a matriz que leva um ponto do mundo 3D ao SCN 2D
+Projeção:
+- `view_matrix(window)`: matriz que leva um ponto do mundo para as coordenadas de view (VRP na origem, VPN alinhado a +Z) — base comum das duas projeções
 - `align_to_z_matrix(n, up)`: matriz que rotaciona um vetor para o eixo +Z (constrói uma base ortonormal)
-- `project_point(point, matrix)`: projeta um ponto 3D para 2D descartando z
+- `project_view_point(p, window)`: projeta um ponto (em coordenadas de view) para o SCN 2D, conforme o modo da window; devolve `None` se o ponto está atrás do COP
+- `project_view_segment(a, b, window)`: projeta um segmento de reta para o SCN 2D, fazendo o clipping de near-plane antes da divisão perspectiva
 
 ### obj_io.py
 
@@ -143,7 +144,26 @@ A partir do Trabalho 1.7 o sistema é 3D. Objetos 2D continuam funcionando como 
 
 Os segmentos dos objetos 3D, já projetados, são clipados individualmente como retas (Cohen-Sutherland ou Liang-Barsky).
 
-> Limitação: objetos 3D (Point3D/Object3D) não são exportados para `.obj` — esse formato 2D só guarda os objetos 2D.
+> Limitação: objetos 3D (Point3D/Object3D) não são exportados para `.obj`. A leitura de modelos de arame 3D é feita por `load_obj_3d` (botão "Load 3D .obj").
+
+## Projeção em Perspectiva
+
+Além da projeção paralela ortogonal, a window suporta **projeção em perspectiva**, selecionável pelo painel "Projection" (radio buttons Parallel/Perspective).
+
+O **Centro de Projeção (COP)** é virtual e fica **atrás do plano de projeção**, em `z = -d` nas coordenadas de view, onde `d = cop_distance`. Após a matriz de view (VRP na origem, VPN em +Z), o plano de projeção é `z = 0`. Um ponto `(x, y, z)` projeta-se sobre esse plano pela reta que o liga ao COP — por semelhança de triângulos:
+
+```
+x_p = x · d / (z + d)        y_p = y · d / (z + d)
+```
+
+**Variação do COP** (botões "Wide angle" / "Telephoto" e campo "COP dist"):
+- COP **próximo** do plano (d pequeno) → forte distorção, efeito **grande angular**;
+- COP **distante** (d grande) → pouca distorção, efeito **teleobjetiva**;
+- quando `d → ∞`, a perspectiva tende à projeção paralela.
+
+**Clipping 2D**: a perspectiva projeta cada segmento de reta dos objetos 3D para o SCN 2D, e o clipping é feito **em 2D** com os algoritmos existentes (Cohen-Sutherland / Liang-Barsky). Antes da divisão perspectiva, os segmentos passam por um clipping de *near-plane* (em coordenadas de view) para descartar a parte que está atrás do COP — sem ele, pontos atrás do COP gerariam projeções inválidas.
+
+Para montar uma cena: adicione objetos 3D pela aba "3D Object" e/ou carregue modelos de arame com "Load 3D .obj". O arquivo de exemplo `models/paralelepipedo.obj` traz um paralelepípedo (200×100×300) pronto para visualizar em perspectiva.
 
 ## Clipping
 

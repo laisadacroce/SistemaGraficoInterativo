@@ -1,0 +1,19 @@
+# Paralelepipedo 200 x 100 x 300 — modelo de arame
+# Carregar com o botao "Load 3D .obj (wireframe)" e visualizar em perspectiva
+mtllib paralelepipedo.mtl
+o paralelepipedo
+v -100 -50 -150
+v 100 -50 -150
+v 100 50 -150
+v -100 50 -150
+v -100 -50 150
+v 100 -50 150
+v 100 50 150
+v -100 50 150
+usemtl paralelepipedo
+f 1 2 3 4
+f 5 6 7 8
+f 1 2 6 5
+f 2 3 7 6
+f 3 4 8 7
+f 4 1 5 8
