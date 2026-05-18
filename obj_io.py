@@ -5,7 +5,7 @@ Supports points (p), lines (l), wireframes (f) and Bézier curves
 material library file."""
 
 import os
-from model import Point, Line, Wireframe, Curve2D
+from model import Point, Line, Wireframe, Curve2D, BSpline
 
 
 def save_obj(filepath, display_file):
@@ -21,6 +21,9 @@ def save_obj(filepath, display_file):
 
     # Collect all unique vertices
     for obj in display_file.drawable_objects():
+        # Objetos 3D (Point3D/Object3D) não são exportados para .obj 2D
+        if obj.object_type in ("object3d", "point3d"):
+            continue
         for x, y in obj.coordinates:
             if (x, y) not in vertices:
                 vertices[(x, y)] = len(vertices) + 1
@@ -38,6 +41,9 @@ def save_obj(filepath, display_file):
 
         # Write each object
         for obj in display_file.drawable_objects():
+            # Objetos 3D não são exportados para .obj 2D (ver acima)
+            if obj.object_type in ("object3d", "point3d"):
+                continue
             safe_name = obj.name.replace(" ", "_")
             f.write(f"o {safe_name}\n")
             f.write(f"usemtl {safe_name}\n")
@@ -54,6 +60,10 @@ def save_obj(filepath, display_file):
                 # Bézier curve — save control points under custom `curv`
                 # directive so we can reconstruct it on load.
                 f.write(f"curv {' '.join(str(i) for i in indices)}\n")
+            elif obj.object_type == "bspline":
+                # B-Spline — save control points under custom `bspl`
+                # directive so we can reconstruct it on load.
+                f.write(f"bspl {' '.join(str(i) for i in indices)}\n")
             f.write("\n")
 
     # Write .mtl file
@@ -136,6 +146,15 @@ def load_obj(filepath):
                 if Curve2D.valid_point_count(len(indices)):
                     points = [Point("", *vertices[i]) for i in indices]
                     obj = Curve2D(current_name or "curve", points)
+                    obj.color = current_color
+                    objects.append(obj)
+
+            elif keyword == "bspl":
+                # B-Spline — custom directive with control point indices
+                indices = [int(p) for p in parts[1:]]
+                if BSpline.valid_point_count(len(indices)):
+                    points = [Point("", *vertices[i]) for i in indices]
+                    obj = BSpline(current_name or "bspline", points)
                     obj.color = current_color
                     objects.append(obj)
 

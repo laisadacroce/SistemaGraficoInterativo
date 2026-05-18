@@ -13,7 +13,8 @@ python3 main.py
 ```
 main.py        → Interface gráfica (Tkinter) e conexão entre componentes
 model.py       → Classes dos objetos gráficos, Window e DisplayFile
-transform.py   → Matrizes homogêneas, transformações 2D, SCN e viewport
+transform.py   → Matrizes homogêneas 3x3, transformações 2D, SCN e viewport
+transform3d.py → Matrizes 4x4, transformações 3D e projeção paralela ortogonal
 clipping.py    → Algoritmos de clipping (ponto, retas, polígonos)
 obj_io.py      → Leitura e escrita de arquivos Wavefront .obj
 ```
@@ -30,13 +31,19 @@ GraphicObject (classe base)
 ├── Line        → dois pontos
 ├── Wireframe   → lista de pontos conectados (polígono, com atributo filled)
 ├── Curve2D     → curva(s) de Bézier encadeadas com continuidade G(0)
-└── Window      → retângulo da window (drawable=False)
+├── BSpline     → curva B-Spline uniforme cúbica via Forward Differences
+├── Point3D     → coordenada única no espaço 3D (x, y, z)
+├── Object3D    → modelo de arame 3D (lista de segmentos de reta)
+└── Window      → câmera 3D (VRP/VPN/VUP), drawable=False
 ```
 
 - **GraphicObject**: classe base com `name`, `coordinates`, `drawable`, `color`, `normalized_coords` e `center()`. Define a interface `object_type`, `draw_segments()` e `draw_segments_scn()` que cada subclasse implementa.
+- **Point3D**: ponto no espaço 3D, capaz das 3 transformações básicas (translação, escalonamento, rotação) via matrizes 4×4. É o bloco de construção dos segmentos de um `Object3D`.
+- **Object3D**: objeto 3D em modelo de arame — uma lista de pontos de controle 3D (`coordinates`) e uma lista de segmentos de reta (`segments`), onde cada segmento é um par de índices ligando dois pontos. Capaz das 3 operações básicas e da rotação em torno de um eixo arbitrário.
 - **Curve2D**: curva formada por uma ou mais curvas cúbicas de Bézier encadeadas com continuidade G(0). Usa a matriz de Bézier `M_B` e as blending functions (polinômios de Bernstein) para calcular cada ponto na curva. Aceita `3k + 1` pontos de controle (com k ≥ 1), onde cada grupo de 4 pontos forma uma curva e o último ponto é compartilhado com o primeiro da próxima. A discretização usa `STEPS = 100` amostras por curva.
-- **Window**: primeiro elemento do display file, não é desenhada. Encapsula `pan()`, `zoom()`, `rotate()` e `reset()`. Possui vetor view-up (`vup`) e ângulo acumulado para rotação.
-- **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida. Método `update_scn()` recalcula coordenadas normalizadas de todos os objetos.
+- **BSpline**: curva B-Spline uniforme cúbica. Aceita **qualquer número de pontos de controle ≥ 4**; com `n` pontos gera `n − 3` segmentos, cada um definido por 4 pontos de controle consecutivos numa janela deslizante (`P_i .. P_{i+3}`). Cada segmento é avaliado pela técnica de **Forward Differences** (diferenças adiantadas): os coeficientes do polinômio cúbico vêm de `C = M_BS · G` (matriz base B-Spline `M_BS` com fator 1/6), e os pontos são gerados apenas com somas a partir dos incrementos iniciais `Δ`, `Δ²`, `Δ³` — sem reavaliar potências de `t`. A continuidade entre segmentos é C(2). Discretização de `STEPS = 100` passos por segmento.
+- **Window**: primeiro elemento do display file, não é desenhada. A partir do Trabalho 1.7 é uma **câmera 3D**, definida por VRP (View Reference Point), VPN (View Plane Normal), VUP (View Up) e tamanho da janela no plano de projeção. Encapsula a navegação 3D: `pan()`, `move_forward()`, `zoom()`, `rotate()`/`roll()`, `pitch()`, `yaw()` e `reset()`.
+- **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida. Método `project()` recalcula as coordenadas normalizadas (SCN) de todos os objetos aplicando a Projeção Paralela Ortogonal.
 
 ### transform.py
 
@@ -61,6 +68,23 @@ Pipeline SCN (Sistema de Coordenadas Normalizado):
 - `scn_matrix(window)`: gera a matriz que transforma coordenadas do mundo para SCN, implementando o algoritmo "Gerar Descrição em SCN" (translada centro da window para origem → rotaciona por -ângulo → escalona para [-1, 1])
 - `scn_to_viewport(x_scn, y_scn, viewport)`: mapeia coordenadas SCN [-1, 1] para pixels do viewport
 
+### transform3d.py
+
+Transformações 3D em coordenadas homogêneas — matrizes 4×4, mesma convenção de vetores-linha do `transform.py` (`p' = p · M`).
+
+Matrizes básicas: `translation_matrix`, `scaling_matrix`, `rotation_x/y/z_matrix`.
+
+Transformações compostas:
+- `rotation_around_axis_matrix(angle, point, direction)`: rotação em torno de um eixo arbitrário (transladar eixo para a origem → alinhar com Z → rotacionar em Z → desfazer)
+- `rotation_around_center_matrix(angle, axis, obj)`: rotação no eixo X/Y/Z em torno do centro do objeto
+- `natural_scaling_matrix(sx, sy, sz, obj)`: escalonamento em torno do centro do objeto
+- `apply_transform_3d(obj, matrix)`: aplica uma matriz 4×4 a todas as coordenadas 3D de um objeto
+
+Projeção Paralela Ortogonal:
+- `parallel_projection_matrix(window)`: gera a matriz que leva um ponto do mundo 3D ao SCN 2D
+- `align_to_z_matrix(n, up)`: matriz que rotaciona um vetor para o eixo +Z (constrói uma base ortonormal)
+- `project_point(point, matrix)`: projeta um ponto 3D para 2D descartando z
+
 ### obj_io.py
 
 - `save_obj(filepath, display_file)`: salva todos os objetos do display file em formato Wavefront .obj, com cores em arquivo .mtl associado
@@ -80,8 +104,8 @@ Clipagem de retas (duas técnicas, selecionáveis por radio button):
 Clipagem de polígonos:
 - `sutherland_hodgman(polygon)`: processa todos os vértices do polígono sequencialmente contra cada aresta da janela (LEFT, RIGHT, BOTTOM, TOP). Para cada par de vértices adjacentes, aplica 4 regras: out→in salva intersecção + vértice, in→in salva vértice, in→out salva intersecção, out→out não salva nada
 
-Clipagem de curvas:
-- `clip_curve(curve_points)`: aplica point clipping em cada amostra da curva discretizada. Como uma curva pode sair e voltar a entrar na janela várias vezes, retorna uma lista de sub-trechos (cada um é uma lista contígua de pontos visíveis). Segue a sugestão do slide 5.6 ("verifico se o fim do próximo segmento t/k está dentro do window usando clipping de pontos")
+Clipagem de curvas (Bézier e B-Spline):
+- `clip_curve(curve_points)`: aplica point clipping em cada amostra da curva discretizada. Como uma curva pode sair e voltar a entrar na janela várias vezes, retorna uma lista de sub-trechos (cada um é uma lista contígua de pontos visíveis). Segue a sugestão do slide 5.6 ("verifico se o fim do próximo segmento t/k está dentro do window usando clipping de pontos"). É usado tanto para curvas de Bézier quanto para B-Splines
 
 ### main.py
 
@@ -89,7 +113,7 @@ Clipagem de curvas:
 - Painel esquerdo: lista de objetos, controles de pan/zoom/rotação/reset, campo de step (%)
 - Radio buttons para seleção do algoritmo de clipagem de retas (Cohen-Sutherland / Liang-Barsky)
 - Canvas de 800x800 com viewport interna menor (margem de 5%) e moldura vermelha para visualização do clipping
-- Dialog para adicionar objetos (Point, Line, Wireframe, Curve) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas
+- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
 - Dialog de transformações com lista de operações pendentes
@@ -98,10 +122,28 @@ Clipagem de curvas:
 ## Pipeline de visualização
 
 ```
-Coordenadas do mundo → scn_matrix(window) → Coordenadas SCN [-1,1] → Clipping (em SCN) → scn_to_viewport → Pixels
+Mundo 3D (x,y,z) → Projeção Paralela Ortogonal → SCN 2D [-1,1] → Clipping (em SCN) → scn_to_viewport → Pixels
 ```
 
-A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na posição, zoom e rotação da window. As coordenadas do mundo nunca são alteradas pela navegação da window. A transformada de viewport é aplicada apenas aos objetos resultantes do clipping.
+A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na câmera 3D (VRP/VPN/VUP) e no tamanho da window. Objetos 2D são tratados como pontos 3D com `z = 0`. As coordenadas do mundo nunca são alteradas pela navegação da window. A transformada de viewport é aplicada apenas aos objetos resultantes do clipping.
+
+## 3D — Pontos, Objetos e Projeção Paralela Ortogonal
+
+A partir do Trabalho 1.7 o sistema é 3D. Objetos 2D continuam funcionando como caso particular (`z = 0`) e, com a câmera na configuração inicial (VRP na origem, VPN = +Z, VUP = +Y), a visualização é idêntica ao sistema 2D anterior.
+
+**Point3D e Object3D**: o `Point3D` realiza as 3 transformações básicas; o `Object3D` é um modelo de arame (lista de segmentos de reta, cada um um par de Pontos3D) capaz das 3 operações básicas e da rotação em torno de um eixo arbitrário. No diálogo "Add Object", a aba **3D Object** recebe os vértices `(x,y,z),...` e os segmentos como pares de índices `(i,j),...` (com um cubo pré-preenchido como exemplo).
+
+**Navegação 3D da window**: o painel "Camera 3D" adiciona movimento ao longo do VPN (Forward/Back), inclinação (Pitch) e giro lateral (Yaw). Os controles existentes de Pan/Zoom/Rotate passam a operar a câmera no espaço 3D (Rotate = roll em torno do VPN).
+
+**Projeção Paralela Ortogonal** (`parallel_projection_matrix`): implementa o algoritmo visto em aula —
+1. Transladar o VRP (primeiro ponto / origem da câmera) para a origem do mundo.
+2. Alinhar o VPN com o eixo Z. **Ao final desta etapa o VPN é (0, 0, 1)**, paralelo ao eixo Z — o VUP orienta o eixo Y.
+3. Projetar ortogonalmente sobre o plano XY (descartar a coordenada z).
+4. Normalizar para o SCN [-1, 1] pelo tamanho da window.
+
+Os segmentos dos objetos 3D, já projetados, são clipados individualmente como retas (Cohen-Sutherland ou Liang-Barsky).
+
+> Limitação: objetos 3D (Point3D/Object3D) não são exportados para `.obj` — esse formato 2D só guarda os objetos 2D.
 
 ## Clipping
 
@@ -152,4 +194,15 @@ A window pode ser rotacionada pelo campo de ângulo e botões de rotação no pa
 - Ponto: `x, y` (ex: `100, 200`)
 - Linha: `(x1,y1),(x2,y2)` (ex: `(0,0),(100,100)`)
 - Wireframe: `(x1,y1),(x2,y2),(x3,y3),...` (ex: `(0,0),(100,0),(100,100),(0,100)`)
-- Curva: `(x1,y1),(x2,y2),...` com 4, 7, 10, 13, ... pontos (ex: 4 pontos `(0,0),(50,150),(100,150),(150,0)`; 7 pontos encadeiam duas curvas com G(0)).
+- Curva (Bézier): `(x1,y1),(x2,y2),...` com 4, 7, 10, 13, ... pontos (ex: 4 pontos `(0,0),(50,150),(100,150),(150,0)`; 7 pontos encadeiam duas curvas com G(0)).
+- B-Spline: `(x1,y1),(x2,y2),...` com qualquer quantidade de pontos ≥ 4 (ex: `(0,0),(50,150),(100,150),(150,0),(200,-50)` → 5 pontos geram 2 segmentos).
+
+## B-Spline com Forward Differences
+
+A classe `BSpline` implementa uma curva B-Spline uniforme cúbica, avaliada pela técnica de **Forward Differences** (Trabalho 1.6):
+
+1. Para cada grupo de 4 pontos de controle consecutivos (janela deslizante), os coeficientes do polinômio cúbico `P(t) = a t³ + b t² + c t + d` são obtidos por `C = M_BS · G`, onde `M_BS` é a matriz base da B-Spline uniforme (com fator 1/6) e `G` é a geometria dos 4 pontos.
+2. Em vez de reavaliar `P(t)` (com potências de `t`) a cada passo, calculam-se **uma única vez** os incrementos iniciais `Δ = P(δ) − P(0)`, `Δ²` e `Δ³` (com `δ = 1/STEPS`).
+3. Cada ponto seguinte é gerado **apenas com somas**: `f += Δ`, `Δ += Δ²`, `Δ² += Δ³`.
+
+O usuário pode entrar com **qualquer número de pontos de controle (mínimo 4)**; `n` pontos produzem `n − 3` segmentos encadeados com continuidade C(2). O clipping reaproveita `clip_curve` (point clipping por amostra).
