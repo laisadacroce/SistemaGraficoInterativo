@@ -1,6 +1,6 @@
 # Sistema Gráfico Interativo - INE5420
 
-Sistema gráfico interativo 2D desenvolvido em Python 3 com Tkinter para a disciplina INE5420 (UFSC).
+Sistema gráfico interativo 2D e 3D desenvolvido em Python 3 com Tkinter para a disciplina INE5420 (UFSC).
 
 ## Como rodar
 
@@ -14,9 +14,9 @@ python3 main.py
 main.py        → Interface gráfica (Tkinter) e conexão entre componentes
 model.py       → Classes dos objetos gráficos, Window e DisplayFile
 transform.py   → Matrizes homogêneas 3x3, transformações 2D, SCN e viewport
-transform3d.py → Matrizes 4x4, transformações 3D e projeção paralela ortogonal
+transform3d.py → Matrizes 4x4, transformações 3D e projeções paralela ortogonal e perspectiva
 clipping.py    → Algoritmos de clipping (ponto, retas, polígonos)
-obj_io.py      → Leitura e escrita de arquivos Wavefront .obj
+obj_io.py      → Leitura e escrita de .obj 2D (load_obj) e leitura de modelos de arame 3D (load_obj_3d)
 ```
 
 ## Arquitetura
@@ -43,7 +43,7 @@ GraphicObject (classe base)
 - **Curve2D**: curva formada por uma ou mais curvas cúbicas de Bézier encadeadas com continuidade G(0). Usa a matriz de Bézier `M_B` e as blending functions (polinômios de Bernstein) para calcular cada ponto na curva. Aceita `3k + 1` pontos de controle (com k ≥ 1), onde cada grupo de 4 pontos forma uma curva e o último ponto é compartilhado com o primeiro da próxima. A discretização usa `STEPS = 100` amostras por curva.
 - **BSpline**: curva B-Spline uniforme cúbica. Aceita **qualquer número de pontos de controle ≥ 4**; com `n` pontos gera `n − 3` segmentos, cada um definido por 4 pontos de controle consecutivos numa janela deslizante (`P_i .. P_{i+3}`). Cada segmento é avaliado pela técnica de **Forward Differences** (diferenças adiantadas): os coeficientes do polinômio cúbico vêm de `C = M_BS · G` (matriz base B-Spline `M_BS` com fator 1/6), e os pontos são gerados apenas com somas a partir dos incrementos iniciais `Δ`, `Δ²`, `Δ³` — sem reavaliar potências de `t`. A continuidade entre segmentos é C(2). Discretização de `STEPS = 100` passos por segmento.
 - **Window**: primeiro elemento do display file, não é desenhada. A partir do Trabalho 1.7 é uma **câmera 3D**, definida por VRP (View Reference Point), VPN (View Plane Normal), VUP (View Up) e tamanho da janela no plano de projeção. Encapsula a navegação 3D: `pan()`, `move_forward()`, `zoom()`, `rotate()`/`roll()`, `pitch()`, `yaw()` e `reset()`.
-- **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida. Método `project()` recalcula as coordenadas normalizadas (SCN) de todos os objetos aplicando a Projeção Paralela Ortogonal.
+- **DisplayFile**: gerencia a coleção de objetos. A window é sempre o primeiro elemento e não pode ser removida. Método `project()` recalcula as coordenadas normalizadas (SCN) de todos os objetos aplicando a projeção da window — paralela ortogonal ou perspectiva, conforme `window.projection_mode`.
 
 ### transform.py
 
@@ -112,21 +112,23 @@ Clipagem de curvas (Bézier e B-Spline):
 
 - Cria a window (600x600) e o display file
 - Painel esquerdo: lista de objetos, controles de pan/zoom/rotação/reset, campo de step (%)
+- Painel "Camera 3D": navegação da câmera no espaço 3D (Forward/Back, Pitch, Yaw)
+- Painel "Projection": radio buttons Parallel/Perspective, campo "COP dist" e botões "Wide angle"/"Telephoto" para variar o centro de projeção
 - Radio buttons para seleção do algoritmo de clipagem de retas (Cohen-Sutherland / Liang-Barsky)
 - Canvas de 800x800 com viewport interna menor (margem de 5%) e moldura vermelha para visualização do clipping
-- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas
+- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline e 3D Object) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
-- Dialog de transformações com lista de operações pendentes
-- Botões de importação/exportação de arquivos .obj
+- Dialog de transformações com lista de operações pendentes (transformações 2D e 3D, conforme o objeto)
+- Botões de importação/exportação de .obj 2D e de carga de modelos de arame 3D ("Load 3D .obj")
 
 ## Pipeline de visualização
 
 ```
-Mundo 3D (x,y,z) → Projeção Paralela Ortogonal → SCN 2D [-1,1] → Clipping (em SCN) → scn_to_viewport → Pixels
+Mundo 3D (x,y,z) → Projeção (Paralela Ortogonal ou Perspectiva) → SCN 2D [-1,1] → Clipping (em SCN) → scn_to_viewport → Pixels
 ```
 
-A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na câmera 3D (VRP/VPN/VUP) e no tamanho da window. Objetos 2D são tratados como pontos 3D com `z = 0`. As coordenadas do mundo nunca são alteradas pela navegação da window. A transformada de viewport é aplicada apenas aos objetos resultantes do clipping.
+A cada redraw, as coordenadas normalizadas (SCN) de todos os objetos são recalculadas com base na câmera 3D (VRP/VPN/VUP), no tamanho da window e no modo de projeção (paralela ou perspectiva). Objetos 2D são tratados como pontos 3D com `z = 0`. As coordenadas do mundo nunca são alteradas pela navegação da window. A transformada de viewport é aplicada apenas aos objetos resultantes do clipping.
 
 ## 3D — Pontos, Objetos e Projeção Paralela Ortogonal
 
