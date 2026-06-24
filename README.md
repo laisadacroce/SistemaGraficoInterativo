@@ -35,6 +35,7 @@ GraphicObject (classe base)
 ├── Point3D       → coordenada única no espaço 3D (x, y, z)
 ├── Object3D      → modelo de arame 3D (lista de segmentos de reta)
 ├── BezierSurface → superfície bicúbica de Bézier 3D (lista de retalhos 4x4)
+├── BSplineSurface→ superfície bicúbica B-Spline 3D (matriz n×m, Forward Differences)
 └── Window        → câmera 3D (VRP/VPN/VUP), drawable=False
 ```
 
@@ -42,6 +43,7 @@ GraphicObject (classe base)
 - **Point3D**: ponto no espaço 3D, capaz das 3 transformações básicas (translação, escalonamento, rotação) via matrizes 4×4. É o bloco de construção dos segmentos de um `Object3D`.
 - **Object3D**: objeto 3D em modelo de arame — uma lista de pontos de controle 3D (`coordinates`) e uma lista de segmentos de reta (`segments`), onde cada segmento é um par de índices ligando dois pontos. Capaz das 3 operações básicas e da rotação em torno de um eixo arbitrário.
 - **BezierSurface**: superfície bicúbica de Bézier 3D — uma lista de retalhos (*patches*), cada um com 16 pontos de controle 3D numa matriz de geometria 4x4, achatados em `coordinates` (16 por retalho). Avalia a função de suavização bicúbica `P(s,t) = S · M_B · G · M_B^T · T^T` (Eq. 5.27) para `x`, `y` e `z`, discretizando `s` e `t` em `STEPS = 10` subdivisões e gerando a malha como iso-curvas em ambas as direções. A malha é avaliada em **coordenadas de view** (3D) e projetada segmento a segmento, de modo que funciona tanto na projeção paralela quanto na perspectiva. É um objeto 3D pleno: sofre as transformações 4x4 e é carregado de `.obj` pela diretiva `surf`. Retalhos que compartilham pontos de controle de borda formam uma superfície composta contínua.
+- **BSplineSurface**: superfície bicúbica B-Spline 3D desenhada por **Diferenças Adiante** (Forward Differences). Recebe uma matriz n×m de pontos de controle (4 ≤ n, m ≤ 20) e **subdivide automaticamente** em (n−3)×(m−3) retalhos — cada um uma janela deslizante 4×4 sobre a matriz, com base uniforme `M_BS` e continuidade C(2). Cada retalho é desenhado pré-calculando a matriz de diferenças `DD = E(δs) · C · E(δt)^T` (com `C = M_BS · G · M_BS^T`) e gerando toda a grade de pontos **apenas com somas**. Diferente do algoritmo de Foley & van Dam, percorre cada iso-curva em t sobre uma cópia da primeira linha de `DD`, preservando a matriz para o avanço em s. Avaliada em coordenadas de view e projetada como as demais superfícies; objeto 3D pleno, carregado de `.obj` pela diretiva `bsurf`.
 - **Curve2D**: curva formada por uma ou mais curvas cúbicas de Bézier encadeadas com continuidade G(0). Usa a matriz de Bézier `M_B` e as blending functions (polinômios de Bernstein) para calcular cada ponto na curva. Aceita `3k + 1` pontos de controle (com k ≥ 1), onde cada grupo de 4 pontos forma uma curva e o último ponto é compartilhado com o primeiro da próxima. A discretização usa `STEPS = 100` amostras por curva.
 - **BSpline**: curva B-Spline uniforme cúbica. Aceita **qualquer número de pontos de controle ≥ 4**; com `n` pontos gera `n − 3` segmentos, cada um definido por 4 pontos de controle consecutivos numa janela deslizante (`P_i .. P_{i+3}`). Cada segmento é avaliado pela técnica de **Forward Differences** (diferenças adiantadas): os coeficientes do polinômio cúbico vêm de `C = M_BS · G` (matriz base B-Spline `M_BS` com fator 1/6), e os pontos são gerados apenas com somas a partir dos incrementos iniciais `Δ`, `Δ²`, `Δ³` — sem reavaliar potências de `t`. A continuidade entre segmentos é C(2). Discretização de `STEPS = 100` passos por segmento.
 - **Window**: primeiro elemento do display file, não é desenhada. A partir do Trabalho 1.7 é uma **câmera 3D**, definida por VRP (View Reference Point), VPN (View Plane Normal), VUP (View Up) e tamanho da janela no plano de projeção. Encapsula a navegação 3D: `pan()`, `move_forward()`, `zoom()`, `rotate()`/`roll()`, `pitch()`, `yaw()` e `reset()`.
@@ -118,7 +120,7 @@ Clipagem de curvas (Bézier e B-Spline):
 - Painel "Projection": radio buttons Parallel/Perspective, campo "COP dist" e botões "Wide angle"/"Telephoto" para variar o centro de projeção
 - Radio buttons para seleção do algoritmo de clipagem de retas (Cohen-Sutherland / Liang-Barsky)
 - Canvas de 800x800 com viewport interna menor (margem de 5%) e moldura vermelha para visualização do clipping
-- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline, 3D Object e Surface) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas e superfícies
+- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline, 3D Object, Surface e B-Spline Surf) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas e superfícies
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
 - Dialog de transformações com lista de operações pendentes (transformações 2D e 3D, conforme o objeto)
@@ -198,6 +200,34 @@ No mesmo padrão dos demais objetos, com as **linhas da matriz de geometria sepa
 
 Cada retalho é gravado como uma linha **`surf`** com os 16 índices dos pontos de controle (diretiva customizada, análoga à `curv`/`bspl`). Vários `surf` sob o mesmo objeto `o` compõem uma superfície de múltiplos retalhos. Os vértices são lidos em 3D (`v x y z`) por `load_obj_3d`. Como o clipping é em 2D, a superfície é projetada antes de recortada.
 
+## Superfícies B-Spline por Diferenças Adiante (Trabalho 1.10)
+
+Superfícies bicúbicas **B-Spline** desenhadas pelo **Método das Diferenças Adiante** (Forward Differences). Valem todos os requisitos das superfícies de Bézier (Trabalho 1.9).
+
+**Entrada flexível**: o usuário entra com uma **matriz de pontos de controle de qualquer dimensão entre 4x4 e 20x20**. O SGI **subdivide automaticamente** em (n−3)×(m−3) retalhos — cada um uma janela deslizante 4×4 sobre a matriz, exatamente como a curva B-Spline desliza uma janela de 4 pontos. Os retalhos têm continuidade C(2) por construção.
+
+**Forward Differences (2D)**: cada retalho é uma superfície bicúbica B-Spline `P(s,t) = S · M_BS · G · M_BS^T · T^T`. Em vez de avaliar esse polinômio a cada passo, pré-calcula-se **uma única vez** a matriz de diferenças:
+
+```
+C  = M_BS · G · M_BS^T            (coeficientes do retalho, por coordenada)
+DD = E(δs) · C · E(δt)^T          (matriz de diferenças adiante 2D)
+```
+
+onde `E(δ)` converte os coeficientes de um cúbico nas suas diferenças adiante iniciais `[f, Δf, Δ²f, Δ³f]`. Toda a grade de pontos do retalho é então gerada **apenas com somas** (varredura em s atualizando as linhas de `DD`; varredura em t gerando cada iso-curva).
+
+**Correção do algoritmo de Foley & van Dam**: o pseudocódigo do livro tem dois erros — ao desenhar cada iso-curva ele corrompe a matriz `DD` necessária para o avanço na outra direção. Aqui, cada iso-curva em t é percorrida sobre uma **cópia** da primeira linha de `DD`, deixando `DD` intacta para o avanço em s. Assim nenhuma varredura destrói as diferenças da outra.
+
+**Entrada de dados (aba *B-Spline Surf*)**: mesmo padrão, linhas da matriz separadas por `;`, pontos `(x,y,z)` por linha — qualquer matriz de 4x4 a 20x20:
+
+```
+(x11,y11,z11),(x12,y12,z12),...,(x1m,y1m,z1m);
+(x21,y21,z21),(x22,y22,z22),...,(x2m,y2m,z2m);
+...
+(xn1,yn1,zn1),(xn2,yn2,zn2),...,(xnm,ynm,znm)
+```
+
+**No .obj**: diretiva customizada `bsurf <linhas> <colunas> <i1> <i2> ...` com os índices da matriz n×m em ordem linha-a-linha (a subdivisão é automática na carga). O arquivo de exemplo `models/superficie_bspline.obj` traz uma matriz 6×6 (9 retalhos). Carregue com o botão "Load 3D .obj (wireframe)".
+
 ## Clipping
 
 O clipping é realizado em coordenadas SCN, após a normalização e antes da transformação de viewport. A janela de clipping é definida como `[-0.90, -0.90, 0.90, 0.90]` (margem de 5% em cada lado), de modo que a viewport é menor que o canvas — a moldura vermelha ao redor torna erros de clipping imediatamente visíveis.
@@ -252,6 +282,7 @@ A window pode ser rotacionada pelo campo de ângulo e botões de rotação no pa
 - B-Spline: `(x1,y1),(x2,y2),...` com qualquer quantidade de pontos ≥ 4 (ex: `(0,0),(50,150),(100,150),(150,0),(200,-50)` → 5 pontos geram 2 segmentos).
 - 3D Object: vértices `(x1,y1,z1),(x2,y2,z2),...` e arestas como pares de índices `(i,j),(i,j),...`.
 - Superfície (bicúbica de Bézier): linhas da matriz separadas por `;`, 4 pontos `(x,y,z)` por linha, cada 4 linhas = 1 retalho (ver seção *Superfícies Bicúbicas de Bézier*).
+- Superfície B-Spline: matriz n×m de qualquer dimensão entre 4x4 e 20x20, linhas separadas por `;`, pontos `(x,y,z)` por linha — subdivisão automática (ver seção *Superfícies B-Spline por Diferenças Adiante*).
 
 ## B-Spline com Forward Differences
 

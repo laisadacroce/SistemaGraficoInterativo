@@ -6,7 +6,7 @@ material library file."""
 
 import os
 from model import (Point, Line, Wireframe, Curve2D, BSpline, Point3D,
-                   Object3D, BezierSurface)
+                   Object3D, BezierSurface, BSplineSurface)
 
 
 def save_obj(filepath, display_file):
@@ -175,6 +175,11 @@ def load_obj_3d(filepath):
     `curv`/`bspl` das curvas); vários `surf` sob o mesmo `o` compõem uma
     superfície de múltiplos retalhos (Trabalho 1.9).
 
+    Superfícies bicúbicas B-Spline (Trabalho 1.10) são lidas da diretiva
+    `bsurf <linhas> <colunas> <i1> <i2> ...`, com a matriz n×m de pontos
+    de controle (índices em ordem linha-a-linha); a subdivisão em
+    retalhos 4×4 é automática.
+
     Usado para carregar modelos como paralelepípedos e superfícies e
     mostrá-los em perspectiva."""
     global_verts = {}   # índice (1-based) -> (x, y, z)
@@ -184,7 +189,8 @@ def load_obj_3d(filepath):
     dir_path = os.path.dirname(filepath)
 
     def new_group(name):
-        g = {"name": name, "color": "#000000", "edges": [], "patches": []}
+        g = {"name": name, "color": "#000000", "edges": [],
+             "patches": [], "bspline_grids": []}
         groups.append(g)
         return g
 
@@ -228,13 +234,28 @@ def load_obj_3d(filepath):
                     current["edges"].append((idxs[-1], idxs[0]))
 
             elif keyword == "surf":
-                # Retalho de superfície bicúbica — 16 índices de pontos
-                # de controle (3D).
+                # Retalho de superfície bicúbica de Bézier — 16 índices
+                # de pontos de controle (3D).
                 if current is None:
                     current = new_group("surface")
                 idxs = [int(p.split("/")[0]) for p in parts[1:]]
                 if BezierSurface.valid_patch(idxs):
                     current["patches"].append([global_verts[i] for i in idxs])
+
+            elif keyword == "bsurf":
+                # Superfície bicúbica B-Spline (Trabalho 1.10):
+                #   bsurf <linhas> <colunas> <i1> <i2> ... <i(linhas*colunas)>
+                # Matriz n×m de pontos de controle em ordem linha-a-linha.
+                if current is None:
+                    current = new_group("bsurface")
+                rows = int(parts[1])
+                cols = int(parts[2])
+                idxs = [int(p.split("/")[0]) for p in parts[3:]]
+                if (BSplineSurface.valid_dims(rows, cols)
+                        and len(idxs) == rows * cols):
+                    grid = [[global_verts[idxs[r * cols + c]] for c in range(cols)]
+                            for r in range(rows)]
+                    current["bspline_grids"].append(grid)
 
     # Constrói os objetos de cada grupo. Grupos com retalhos `surf`
     # viram BezierSurface; grupos com arestas viram Object3D (com os
@@ -244,6 +265,10 @@ def load_obj_3d(filepath):
     for g in groups:
         if g["patches"]:
             obj = BezierSurface(g["name"] or "surface", g["patches"])
+            obj.color = g["color"]
+            objects.append(obj)
+        for grid in g["bspline_grids"]:
+            obj = BSplineSurface(g["name"] or "bsurface", grid)
             obj.color = g["color"]
             objects.append(obj)
         if g["edges"]:

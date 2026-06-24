@@ -2,7 +2,7 @@ import math
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
 from model import (DisplayFile, Window, Point, Line, Wireframe, Curve2D,
-                    BSpline, Point3D, Object3D, BezierSurface)
+                    BSpline, Point3D, Object3D, BezierSurface, BSplineSurface)
 from transform import (scn_to_viewport, apply_transform,
                         compose_matrices, translation_matrix,
                         natural_scaling_matrix, rotation_matrix,
@@ -357,10 +357,11 @@ def redraw():
                     sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
                     canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
 
-        elif obj.object_type == "surface":
-            # Superfície bicúbica de Bézier — a malha 3D (iso-curvas) é
-            # gerada em coordenadas de view e cada segmento é projetado
-            # (com near-plane na perspectiva) e clipado em 2D como linha.
+        elif obj.object_type in ("surface", "bsurface"):
+            # Superfície bicúbica (Bézier 1.9 ou B-Spline por forward
+            # differences 1.10) — a malha 3D (iso-curvas) é gerada em
+            # coordenadas de view e cada segmento é projetado (com
+            # near-plane na perspectiva) e clipado em 2D como linha.
             line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
             for a, b in obj.mesh_view_segments():
                 seg = t3d.project_view_segment(a, b, window)
@@ -405,6 +406,32 @@ def parse_surface_patches(raw):
             patch.extend(parsed_rows[k + r])
         patches.append(patch)  # 16 pontos de controle
     return patches
+
+
+def parse_bspline_grid(raw):
+    """Converte o texto da aba B-Spline Surf numa matriz n×m de pontos
+    de controle (lista de linhas; cada linha é uma lista de tuplas
+    (x, y, z)). Linhas separadas por ';', pontos (x,y,z) por linha.
+    Todas as linhas precisam do mesmo número de colunas; a dimensão deve
+    ficar entre 4x4 e 20x20 — a subdivisão em retalhos é automática."""
+    rows = [r.strip() for r in raw.split(";") if r.strip()]
+    grid = []
+    for r in rows:
+        value = eval(r)
+        if value and isinstance(value[0], (int, float)):
+            value = (value,)  # linha com um único ponto "(x,y,z)"
+        grid.append([tuple(float(c) for c in pt) for pt in value])
+
+    if not grid:
+        raise ValueError("matriz de controle vazia")
+    n_cols = len(grid[0])
+    if any(len(row) != n_cols for row in grid):
+        raise ValueError("todas as linhas precisam do mesmo número de pontos")
+    if any(len(pt) != 3 for row in grid for pt in row):
+        raise ValueError("cada ponto precisa de (x, y, z)")
+    if not BSplineSurface.valid_dims(len(grid), n_cols):
+        raise ValueError("a matriz deve ter entre 4x4 e 20x20 pontos")
+    return grid
 
 
 def open_add_object_dialog():
@@ -455,6 +482,7 @@ def open_add_object_dialog():
     bspline_tab   = tk.Frame(notebook)
     object3d_tab  = tk.Frame(notebook)
     surface_tab   = tk.Frame(notebook)
+    bsurface_tab  = tk.Frame(notebook)
 
     notebook.add(point_tab,     text="Point")
     notebook.add(line_tab,      text="Line")
@@ -463,6 +491,7 @@ def open_add_object_dialog():
     notebook.add(bspline_tab,   text="B-Spline")
     notebook.add(object3d_tab,  text="3D Object")
     notebook.add(surface_tab,   text="Surface")
+    notebook.add(bsurface_tab,  text="B-Spline Surf")
 
     # Point tab
     tk.Label(point_tab, text="Coordinates:").pack(pady=5)
@@ -531,6 +560,22 @@ def open_add_object_dialog():
     surface_text.pack(pady=3, padx=5)
     tk.Label(surface_tab,
              text="(o exemplo acima desenha um retalho em forma de bossa)").pack()
+
+    # B-Spline Surface tab — matriz n×m (4..20) por Forward Differences
+    tk.Label(bsurface_tab, text="Bicubic B-Spline Surface (Forward Differences)").pack(pady=3)
+    tk.Label(bsurface_tab,
+             text="Matriz de controle n×m (4x4 até 20x20). Linhas separadas\n"
+                  "por ';', pontos (x,y,z) por linha. Subdivisão automática.").pack()
+    bsurface_text = tk.Text(bsurface_tab, width=52, height=8)
+    bsurface_text.insert("1.0",
+        "(-200,-200,0),(-100,-200,0),(0,-200,0),(100,-200,0),(200,-200,0);\n"
+        "(-200,-100,0),(-100,-100,200),(0,-100,200),(100,-100,200),(200,-100,0);\n"
+        "(-200,0,0),(-100,0,200),(0,0,300),(100,0,200),(200,0,0);\n"
+        "(-200,100,0),(-100,100,200),(0,100,200),(100,100,200),(200,100,0);\n"
+        "(-200,200,0),(-100,200,0),(0,200,0),(100,200,0),(200,200,0)")
+    bsurface_text.pack(pady=3, padx=5)
+    tk.Label(bsurface_tab,
+             text="(exemplo: malha 5x5 → 2x2 = 4 retalhos)").pack()
 
     def on_ok():
         name = name_entry.get().strip()
@@ -614,6 +659,10 @@ def open_add_object_dialog():
             elif tab == 6: # Surface (bicubic Bézier)
                 patches = parse_surface_patches(surface_text.get("1.0", tk.END))
                 obj = BezierSurface(name, patches)
+
+            elif tab == 7: # B-Spline Surface (forward differences)
+                grid = parse_bspline_grid(bsurface_text.get("1.0", tk.END))
+                obj = BSplineSurface(name, grid)
         except Exception:
             messagebox.showerror("Invalid input",
                 "Could not parse coordinates. Check the format.", parent=dialog)
@@ -661,7 +710,7 @@ def open_transform_dialog():
         messagebox.showinfo("No selection", "Select an object from the list first.")
         return
 
-    is_3d = obj.object_type in ("object3d", "point3d", "surface")
+    is_3d = obj.object_type in ("object3d", "point3d", "surface", "bsurface")
 
     dialog = tk.Toplevel(root)
     dialog.title(f"Transform: {obj}")

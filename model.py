@@ -607,6 +607,217 @@ class BezierSurface(GraphicObject):
         return []
 
 
+class BSplineSurface(GraphicObject):
+    """Superfície bicúbica B-Spline 3D desenhada por Diferenças Adiante
+    (Forward Differences) — Trabalho 1.10.
+
+    Recebe uma matriz n×m de pontos de controle 3D (4 ≤ n, m ≤ 20),
+    achatada em `coordinates` (ordem linha-a-linha). O SGI subdivide
+    automaticamente em (n-3)×(m-3) retalhos, cada um uma janela
+    deslizante 4×4 sobre a matriz — exatamente como a curva B-Spline
+    desliza uma janela de 4 pontos. Cada retalho é uma superfície
+    bicúbica B-Spline (base uniforme M_BS), com continuidade C(2) entre
+    retalhos por construção.
+
+    Cada retalho é desenhado pelo Método das Diferenças Adiante: em vez
+    de avaliar P(s,t) = S · C · T^T (com C = M_BS · G · M_BS^T) a cada
+    passo, pré-calcula uma única vez a matriz de diferenças
+
+        DD = E(δs) · C · E(δt)^T
+
+    e gera toda a grade de pontos do retalho apenas com SOMAS. E(δ) é a
+    matriz que converte os coeficientes de um polinômio cúbico nas suas
+    diferenças adiante iniciais [f, Δf, Δ²f, Δ³f].
+
+    Diferente do pseudocódigo de Foley & van Dam, cada iso-curva em t é
+    percorrida sobre uma CÓPIA da primeira linha de DD, preservando DD
+    intacta para o avanço em s — assim nem a varredura em t nem a em s
+    corrompem as diferenças necessárias à outra direção (este é o erro
+    clássico do algoritmo do livro). A avaliação é feita em coordenadas
+    de VIEW (afim), e a malha 3D é projetada segmento a segmento em
+    main.py (paralela ou perspectiva)."""
+
+    STEPS = 10  # passos de forward differences por direção, por retalho
+
+    # Matriz base da B-Spline uniforme cúbica (M_BS), fator 1/6 embutido
+    # (a mesma usada na curva BSpline).
+    M_BS = [
+        [-1/6,  3/6, -3/6, 1/6],
+        [ 3/6, -6/6,  3/6,   0],
+        [-3/6,    0,  3/6,   0],
+        [ 1/6,  4/6,  1/6,   0],
+    ]
+
+    def __init__(self, name, grid, drawable=True):
+        # grid: lista de linhas; cada linha é uma lista de pontos
+        # (Point3D ou tuplas (x, y, z)). Todas as linhas com o mesmo
+        # número de colunas.
+        self.n_rows = len(grid)
+        self.n_cols = len(grid[0]) if grid else 0
+        if not self.valid_dims(self.n_rows, self.n_cols):
+            raise ValueError("a matriz de controle deve ter entre 4x4 e 20x20")
+        coords = []
+        for row in grid:
+            if len(row) != self.n_cols:
+                raise ValueError("todas as linhas precisam do mesmo número de pontos")
+            for p in row:
+                if isinstance(p, Point3D):
+                    coords.append(p.coordinates[0])
+                else:
+                    coords.append((float(p[0]), float(p[1]), float(p[2])))
+        super().__init__(name, coords, drawable)
+
+    @property
+    def object_type(self):
+        return "bsurface"
+
+    @staticmethod
+    def valid_dims(n_rows, n_cols):
+        """A matriz de pontos de controle deve ter dimensão 4x4 a 20x20."""
+        return 4 <= n_rows <= 20 and 4 <= n_cols <= 20
+
+    @property
+    def n_patches(self):
+        return (self.n_rows - 3) * (self.n_cols - 3)
+
+    def center3d(self):
+        """Centro geométrico 3D — média dos pontos de controle."""
+        n = len(self.coordinates)
+        cx = sum(p[0] for p in self.coordinates) / n
+        cy = sum(p[1] for p in self.coordinates) / n
+        cz = sum(p[2] for p in self.coordinates) / n
+        return (cx, cy, cz)
+
+    def center(self):
+        """Projeção 2D do centro (compatibilidade com a interface base)."""
+        cx, cy, cz = self.center3d()
+        return (cx, cy)
+
+    # ── Álgebra de matrizes (locais) ─────────────────────
+    @staticmethod
+    def _mat_mult(a, b):
+        """Multiplica a (m×n) por b (n×p)."""
+        m, n, p = len(a), len(b), len(b[0])
+        result = [[0.0] * p for _ in range(m)]
+        for i in range(m):
+            for k in range(n):
+                aik = a[i][k]
+                if aik == 0:
+                    continue
+                for j in range(p):
+                    result[i][j] += aik * b[k][j]
+        return result
+
+    @staticmethod
+    def _transpose(matrix):
+        return [list(row) for row in zip(*matrix)]
+
+    @staticmethod
+    def _e_matrix(delta):
+        """Matriz E(δ) das diferenças adiante de um polinômio cúbico:
+        dado o vetor de coeficientes [a, b, c, d] de a t³+b t²+c t+d,
+        E(δ)·[a,b,c,d]^T = [f(0), Δf, Δ²f, Δ³f]^T, com passo δ."""
+        d2 = delta * delta
+        d3 = d2 * delta
+        return [
+            [0,       0,      0,     1],   # f(0)  = d
+            [d3,      d2,     delta, 0],   # Δf
+            [6 * d3,  2 * d2, 0,     0],   # Δ²f
+            [6 * d3,  0,      0,     0],   # Δ³f
+        ]
+
+    def _window_geometry(self, flat_coords, pi, pj):
+        """Matrizes de geometria 4x4 (Gx, Gy, Gz) da janela deslizante
+        que começa na linha pi, coluna pj da matriz de controle."""
+        gx = [[None] * 4 for _ in range(4)]
+        gy = [[None] * 4 for _ in range(4)]
+        gz = [[None] * 4 for _ in range(4)]
+        for r in range(4):
+            for c in range(4):
+                p = flat_coords[(pi + r) * self.n_cols + (pj + c)]
+                gx[r][c] = p[0]
+                gy[r][c] = p[1]
+                gz[r][c] = p[2]
+        return gx, gy, gz
+
+    def _fwd_diff_grid(self, dd, ns, nt):
+        """Gera a grade (ns+1)×(nt+1) de valores de UMA coordenada do
+        retalho, a partir da matriz de diferenças DD, usando só somas.
+
+        Trabalha sobre uma cópia de DD. Para cada passo em s, percorre a
+        iso-curva em t sobre uma cópia da primeira linha — preservando DD
+        para o avanço em s (correção do algoritmo de Foley & van Dam)."""
+        m = [row[:] for row in dd]
+        grid = []
+        for _i in range(ns + 1):
+            # iso-curva em t a partir de m[0], sem destruir m[0]
+            a0, a1, a2, a3 = m[0][0], m[0][1], m[0][2], m[0][3]
+            row = []
+            for _j in range(nt + 1):
+                row.append(a0)
+                a0 += a1
+                a1 += a2
+                a2 += a3
+            grid.append(row)
+            # avanço em s: diferença adiante das linhas de DD
+            for k in range(4):
+                m[0][k] += m[1][k]
+                m[1][k] += m[2][k]
+                m[2][k] += m[3][k]
+        return grid
+
+    def _patch_segments(self, gx, gy, gz):
+        """Diferenças adiante de um retalho 4×4: calcula C = M_BS·G·M_BS^T
+        e DD = E(δs)·C·E(δt)^T para x, y, z, gera as três grades e liga
+        os pontos numa malha de iso-curvas (direções s e t)."""
+        ns = nt = self.STEPS
+        mbs_t = self._transpose(self.M_BS)
+        es = self._e_matrix(1.0 / ns)
+        et_t = self._transpose(self._e_matrix(1.0 / nt))
+
+        def grade(g):
+            c = self._mat_mult(self._mat_mult(self.M_BS, g), mbs_t)
+            dd = self._mat_mult(self._mat_mult(es, c), et_t)
+            return self._fwd_diff_grid(dd, ns, nt)
+
+        sx, sy, sz = grade(gx), grade(gy), grade(gz)
+        pts = [[(sx[i][j], sy[i][j], sz[i][j]) for j in range(nt + 1)]
+               for i in range(ns + 1)]
+
+        segments = []
+        for i in range(ns + 1):
+            for j in range(nt):
+                segments.append((pts[i][j], pts[i][j + 1]))
+        for j in range(nt + 1):
+            for i in range(ns):
+                segments.append((pts[i][j], pts[i + 1][j]))
+        return segments
+
+    def _mesh_segments(self, flat_coords):
+        """Percorre todas as janelas deslizantes 4×4 (subdivisão
+        automática) e concatena os segmentos da malha de cada retalho."""
+        segments = []
+        for pi in range(self.n_rows - 3):
+            for pj in range(self.n_cols - 3):
+                gx, gy, gz = self._window_geometry(flat_coords, pi, pj)
+                segments.extend(self._patch_segments(gx, gy, gz))
+        return segments
+
+    def mesh_view_segments(self):
+        """Segmentos 3D da malha em coordenadas de VIEW, prontos para
+        projeção segmento a segmento (paralela ou perspectiva)."""
+        return self._mesh_segments(self.view_coords)
+
+    def draw_segments(self):
+        """Segmentos 3D da malha em coordenadas do mundo."""
+        return self._mesh_segments(self.coordinates)
+
+    def draw_segments_scn(self):
+        """Não usado: projetada em main.py a partir da malha 3D em
+        coordenadas de view. Mantido por completude da interface."""
+        return []
+
+
 class Window(GraphicObject):
     """Window/câmera do sistema. A partir do Trabalho 1.7 é uma câmera
     3D, definida por:
