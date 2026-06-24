@@ -5,7 +5,8 @@ Supports points (p), lines (l), wireframes (f) and Bézier curves
 material library file."""
 
 import os
-from model import Point, Line, Wireframe, Curve2D, BSpline, Point3D, Object3D
+from model import (Point, Line, Wireframe, Curve2D, BSpline, Point3D,
+                   Object3D, BezierSurface)
 
 
 def save_obj(filepath, display_file):
@@ -169,16 +170,21 @@ def load_obj_3d(filepath):
     as arestas (segmentos de reta) vêm das faces `f` — cada face é um
     polígono fechado — e das linhas `l`. Lê cores do `.mtl` associado.
 
-    Usado para carregar modelos como paralelepípedos e mostrá-los em
-    perspectiva."""
+    Superfícies bicúbicas de Bézier são lidas da diretiva customizada
+    `surf` (16 índices de pontos de controle por retalho, análoga à
+    `curv`/`bspl` das curvas); vários `surf` sob o mesmo `o` compõem uma
+    superfície de múltiplos retalhos (Trabalho 1.9).
+
+    Usado para carregar modelos como paralelepípedos e superfícies e
+    mostrá-los em perspectiva."""
     global_verts = {}   # índice (1-based) -> (x, y, z)
     materials = {}
-    groups = []         # lista de grupos {name, color, edges}
+    groups = []         # lista de grupos {name, color, edges, patches}
     current = None
     dir_path = os.path.dirname(filepath)
 
     def new_group(name):
-        g = {"name": name, "color": "#000000", "edges": []}
+        g = {"name": name, "color": "#000000", "edges": [], "patches": []}
         groups.append(g)
         return g
 
@@ -221,24 +227,38 @@ def load_obj_3d(filepath):
                 if keyword == "f" and len(idxs) > 2:
                     current["edges"].append((idxs[-1], idxs[0]))
 
-    # Constrói um Object3D por grupo, remapeando os índices globais
-    # para índices locais (cada objeto guarda só os vértices que usa)
+            elif keyword == "surf":
+                # Retalho de superfície bicúbica — 16 índices de pontos
+                # de controle (3D).
+                if current is None:
+                    current = new_group("surface")
+                idxs = [int(p.split("/")[0]) for p in parts[1:]]
+                if BezierSurface.valid_patch(idxs):
+                    current["patches"].append([global_verts[i] for i in idxs])
+
+    # Constrói os objetos de cada grupo. Grupos com retalhos `surf`
+    # viram BezierSurface; grupos com arestas viram Object3D (com os
+    # índices globais remapeados para locais, guardando só os vértices
+    # usados).
     objects = []
     for g in groups:
-        if not g["edges"]:
-            continue
-        local = []
-        remap = {}
-        for a, b in g["edges"]:
-            for gi in (a, b):
-                if gi not in remap:
-                    remap[gi] = len(local)
-                    local.append(global_verts[gi])
-        points = [Point3D("", x, y, z) for (x, y, z) in local]
-        segments = [(remap[a], remap[b]) for a, b in g["edges"]]
-        obj = Object3D(g["name"], points, segments)
-        obj.color = g["color"]
-        objects.append(obj)
+        if g["patches"]:
+            obj = BezierSurface(g["name"] or "surface", g["patches"])
+            obj.color = g["color"]
+            objects.append(obj)
+        if g["edges"]:
+            local = []
+            remap = {}
+            for a, b in g["edges"]:
+                for gi in (a, b):
+                    if gi not in remap:
+                        remap[gi] = len(local)
+                        local.append(global_verts[gi])
+            points = [Point3D("", x, y, z) for (x, y, z) in local]
+            segments = [(remap[a], remap[b]) for a, b in g["edges"]]
+            obj = Object3D(g["name"], points, segments)
+            obj.color = g["color"]
+            objects.append(obj)
 
     return objects
 

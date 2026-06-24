@@ -27,19 +27,21 @@ Hierarquia de classes:
 
 ```
 GraphicObject (classe base)
-├── Point       → coordenada única (x, y)
-├── Line        → dois pontos
-├── Wireframe   → lista de pontos conectados (polígono, com atributo filled)
-├── Curve2D     → curva(s) de Bézier encadeadas com continuidade G(0)
-├── BSpline     → curva B-Spline uniforme cúbica via Forward Differences
-├── Point3D     → coordenada única no espaço 3D (x, y, z)
-├── Object3D    → modelo de arame 3D (lista de segmentos de reta)
-└── Window      → câmera 3D (VRP/VPN/VUP), drawable=False
+├── Point         → coordenada única (x, y)
+├── Line          → dois pontos
+├── Wireframe     → lista de pontos conectados (polígono, com atributo filled)
+├── Curve2D       → curva(s) de Bézier encadeadas com continuidade G(0)
+├── BSpline       → curva B-Spline uniforme cúbica via Forward Differences
+├── Point3D       → coordenada única no espaço 3D (x, y, z)
+├── Object3D      → modelo de arame 3D (lista de segmentos de reta)
+├── BezierSurface → superfície bicúbica de Bézier 3D (lista de retalhos 4x4)
+└── Window        → câmera 3D (VRP/VPN/VUP), drawable=False
 ```
 
 - **GraphicObject**: classe base com `name`, `coordinates`, `drawable`, `color`, `normalized_coords` e `center()`. Define a interface `object_type`, `draw_segments()` e `draw_segments_scn()` que cada subclasse implementa.
 - **Point3D**: ponto no espaço 3D, capaz das 3 transformações básicas (translação, escalonamento, rotação) via matrizes 4×4. É o bloco de construção dos segmentos de um `Object3D`.
 - **Object3D**: objeto 3D em modelo de arame — uma lista de pontos de controle 3D (`coordinates`) e uma lista de segmentos de reta (`segments`), onde cada segmento é um par de índices ligando dois pontos. Capaz das 3 operações básicas e da rotação em torno de um eixo arbitrário.
+- **BezierSurface**: superfície bicúbica de Bézier 3D — uma lista de retalhos (*patches*), cada um com 16 pontos de controle 3D numa matriz de geometria 4x4, achatados em `coordinates` (16 por retalho). Avalia a função de suavização bicúbica `P(s,t) = S · M_B · G · M_B^T · T^T` (Eq. 5.27) para `x`, `y` e `z`, discretizando `s` e `t` em `STEPS = 10` subdivisões e gerando a malha como iso-curvas em ambas as direções. A malha é avaliada em **coordenadas de view** (3D) e projetada segmento a segmento, de modo que funciona tanto na projeção paralela quanto na perspectiva. É um objeto 3D pleno: sofre as transformações 4x4 e é carregado de `.obj` pela diretiva `surf`. Retalhos que compartilham pontos de controle de borda formam uma superfície composta contínua.
 - **Curve2D**: curva formada por uma ou mais curvas cúbicas de Bézier encadeadas com continuidade G(0). Usa a matriz de Bézier `M_B` e as blending functions (polinômios de Bernstein) para calcular cada ponto na curva. Aceita `3k + 1` pontos de controle (com k ≥ 1), onde cada grupo de 4 pontos forma uma curva e o último ponto é compartilhado com o primeiro da próxima. A discretização usa `STEPS = 100` amostras por curva.
 - **BSpline**: curva B-Spline uniforme cúbica. Aceita **qualquer número de pontos de controle ≥ 4**; com `n` pontos gera `n − 3` segmentos, cada um definido por 4 pontos de controle consecutivos numa janela deslizante (`P_i .. P_{i+3}`). Cada segmento é avaliado pela técnica de **Forward Differences** (diferenças adiantadas): os coeficientes do polinômio cúbico vêm de `C = M_BS · G` (matriz base B-Spline `M_BS` com fator 1/6), e os pontos são gerados apenas com somas a partir dos incrementos iniciais `Δ`, `Δ²`, `Δ³` — sem reavaliar potências de `t`. A continuidade entre segmentos é C(2). Discretização de `STEPS = 100` passos por segmento.
 - **Window**: primeiro elemento do display file, não é desenhada. A partir do Trabalho 1.7 é uma **câmera 3D**, definida por VRP (View Reference Point), VPN (View Plane Normal), VUP (View Up) e tamanho da janela no plano de projeção. Encapsula a navegação 3D: `pan()`, `move_forward()`, `zoom()`, `rotate()`/`roll()`, `pitch()`, `yaw()` e `reset()`.
@@ -116,7 +118,7 @@ Clipagem de curvas (Bézier e B-Spline):
 - Painel "Projection": radio buttons Parallel/Perspective, campo "COP dist" e botões "Wide angle"/"Telephoto" para variar o centro de projeção
 - Radio buttons para seleção do algoritmo de clipagem de retas (Cohen-Sutherland / Liang-Barsky)
 - Canvas de 800x800 com viewport interna menor (margem de 5%) e moldura vermelha para visualização do clipping
-- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline e 3D Object) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas
+- Dialog para adicionar objetos (Point, Line, Wireframe, Curve, B-Spline, 3D Object e Surface) com abas, seleção de cor, opção de preenchimento para wireframes e entrada livre de pontos de controle para curvas e superfícies
 - Remoção de objetos selecionados na lista
 - Validação de nomes duplicados
 - Dialog de transformações com lista de operações pendentes (transformações 2D e 3D, conforme o objeto)
@@ -167,6 +169,35 @@ x_p = x · d / (z + d)        y_p = y · d / (z + d)
 
 Para montar uma cena: adicione objetos 3D pela aba "3D Object" e/ou carregue modelos de arame com "Load 3D .obj". O arquivo de exemplo `models/paralelepipedo.obj` traz um paralelepípedo (200×100×300) pronto para visualizar em perspectiva.
 
+## Superfícies Bicúbicas de Bézier (Trabalho 1.9)
+
+Superfícies 3D representadas por suas **matrizes de geometria**. Cada superfície é uma lista de retalhos (*patches*); cada retalho é uma matriz 4x4 de 16 pontos de controle 3D. A superfície é desenhada avaliando a **função de suavização para superfícies bicúbicas**:
+
+```
+P(s,t) = S · M_B · G · M_B^T · T^T      S = [s³ s² s 1]   T = [t³ t² t 1]
+```
+
+para cada coordenada (`x`, `y`, `z`), com `s` e `t` discretizados em `STEPS = 10` subdivisões. Os pontos amostrados são ligados numa **malha de iso-curvas** nas direções `s` e `t`.
+
+**Integração com o pipeline 3D**: a malha é avaliada em **coordenadas de view** (3D) — válido porque a matriz de view é afim — e cada segmento é então projetado (paralela ortogonal ou perspectiva) e clipado em 2D, exatamente como as arestas de um `Object3D`. Assim a superfície aparece corretamente em ambas as projeções, incluindo o clipping de *near-plane* da perspectiva. As superfícies também sofrem as transformações 3D (matrizes 4x4).
+
+**Superfície composta**: retalhos adjacentes que compartilham os pontos de controle de borda formam uma superfície composta contínua (continuidade G(0) por construção). O arquivo de exemplo `models/superficie_bezier.obj` traz uma superfície composta por **3 retalhos**, carregável pelo botão "Load 3D .obj (wireframe)".
+
+### Entrada de dados (aba *Surface*)
+
+No mesmo padrão dos demais objetos, com as **linhas da matriz de geometria separadas por `;`** e 4 pontos `(x,y,z)` por linha. Cada grupo de 4 linhas (4x4 = 16 pontos) forma um retalho; basta repetir para entrar com mais retalhos:
+
+```
+(x11,y11,z11),(x12,y12,z12),(x13,y13,z13),(x14,y14,z14);
+(x21,y21,z21),(x22,y22,z22),(x23,y23,z23),(x24,y24,z24);
+(x31,y31,z31),(x32,y32,z32),(x33,y33,z33),(x34,y34,z34);
+(x41,y41,z41),(x42,y42,z42),(x43,y43,z43),(x44,y44,z44)
+```
+
+### Superfícies no .obj
+
+Cada retalho é gravado como uma linha **`surf`** com os 16 índices dos pontos de controle (diretiva customizada, análoga à `curv`/`bspl`). Vários `surf` sob o mesmo objeto `o` compõem uma superfície de múltiplos retalhos. Os vértices são lidos em 3D (`v x y z`) por `load_obj_3d`. Como o clipping é em 2D, a superfície é projetada antes de recortada.
+
 ## Clipping
 
 O clipping é realizado em coordenadas SCN, após a normalização e antes da transformação de viewport. A janela de clipping é definida como `[-0.90, -0.90, 0.90, 0.90]` (margem de 5% em cada lado), de modo que a viewport é menor que o canvas — a moldura vermelha ao redor torna erros de clipping imediatamente visíveis.
@@ -177,6 +208,7 @@ Técnicas implementadas:
 - **Polígonos preenchidos**: Sutherland-Hodgman (processa os vértices contra cada aresta da janela, fechando o polígono na borda de clipping)
 - **Wireframes (não preenchidos)**: cada aresta é clipada individualmente como linha (usando o algoritmo selecionado no radio button), evitando arestas falsas ao longo da borda de clipping
 - **Curvas**: point clipping em cada amostra discretizada (conforme slide 5.6)
+- **Superfícies e objetos 3D**: cada segmento de reta (aresta do `Object3D` ou da malha da superfície) é projetado para o SCN 2D e clipado individualmente como linha. O clipping permanece **em 2D**
 
 ## Polígonos preenchidos
 
@@ -218,6 +250,8 @@ A window pode ser rotacionada pelo campo de ângulo e botões de rotação no pa
 - Wireframe: `(x1,y1),(x2,y2),(x3,y3),...` (ex: `(0,0),(100,0),(100,100),(0,100)`)
 - Curva (Bézier): `(x1,y1),(x2,y2),...` com 4, 7, 10, 13, ... pontos (ex: 4 pontos `(0,0),(50,150),(100,150),(150,0)`; 7 pontos encadeiam duas curvas com G(0)).
 - B-Spline: `(x1,y1),(x2,y2),...` com qualquer quantidade de pontos ≥ 4 (ex: `(0,0),(50,150),(100,150),(150,0),(200,-50)` → 5 pontos geram 2 segmentos).
+- 3D Object: vértices `(x1,y1,z1),(x2,y2,z2),...` e arestas como pares de índices `(i,j),(i,j),...`.
+- Superfície (bicúbica de Bézier): linhas da matriz separadas por `;`, 4 pontos `(x,y,z)` por linha, cada 4 linhas = 1 retalho (ver seção *Superfícies Bicúbicas de Bézier*).
 
 ## B-Spline com Forward Differences
 

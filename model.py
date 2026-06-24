@@ -433,6 +433,180 @@ class Object3D(GraphicObject):
         return result
 
 
+class BezierSurface(GraphicObject):
+    """Superfície bicúbica de Bézier 3D — Trabalho 1.9.
+
+    Representada por suas matrizes de geometria: uma lista de retalhos
+    (patches), cada um com 16 pontos de controle 3D organizados numa
+    matriz 4x4. Os pontos de controle ficam achatados em `coordinates`
+    (16 por retalho, em ordem linha-a-linha), de modo que a superfície
+    participa do pipeline 3D comum (view → projeção) exatamente como um
+    Object3D — inclusive das transformações 3D por matrizes 4x4.
+
+    O desenho avalia a função de suavização para superfícies bicúbicas
+    (Eq. 5.27 dos slides):
+
+        P(s, t) = S · M_B · G · M_B^T · T^T
+
+    onde S = [s³ s² s 1], T = [t³ t² t 1], M_B é a matriz de Bézier e G é
+    a matriz de geometria 4x4 de UMA das coordenadas (x, y ou z). A
+    avaliação é feita sobre os pontos de controle em coordenadas de VIEW
+    (3D) — válido porque a matriz de view é afim — gerando uma malha 3D
+    de iso-curvas (nas direções s e t). Essa malha 3D é então projetada
+    (paralela ortogonal ou perspectiva) segmento a segmento em main.py,
+    aproveitando o clipping de near-plane da perspectiva.
+
+    Retalhos que compartilham pontos de controle de borda formam uma
+    superfície composta contínua (G(0) por construção)."""
+
+    STEPS = 10  # subdivisões em cada direção (s, t) por retalho
+
+    # Matriz de Bézier (M_B) — mesma das curvas (Eq. 5.22)
+    M_B = [
+        [-1,  3, -3, 1],
+        [ 3, -6,  3, 0],
+        [-3,  3,  0, 0],
+        [ 1,  0,  0, 0],
+    ]
+
+    def __init__(self, name, patches, drawable=True):
+        # patches: lista de retalhos; cada retalho é uma lista de 16
+        # pontos de controle (Point3D ou tuplas (x, y, z)).
+        coords = []
+        for patch in patches:
+            if not self.valid_patch(patch):
+                raise ValueError("cada retalho precisa de 16 pontos de controle")
+            for p in patch:
+                if isinstance(p, Point3D):
+                    coords.append(p.coordinates[0])
+                else:
+                    coords.append((float(p[0]), float(p[1]), float(p[2])))
+        super().__init__(name, coords, drawable)
+
+    @property
+    def object_type(self):
+        return "surface"
+
+    @staticmethod
+    def valid_patch(points):
+        """Um retalho bicúbico precisa de exatamente 16 pontos de controle."""
+        return len(points) == 16
+
+    @property
+    def n_patches(self):
+        return len(self.coordinates) // 16
+
+    def patches(self):
+        """Lista de retalhos (cada um = 16 tuplas (x,y,z)) reconstruída
+        das coordenadas achatadas. Reflete transformações já aplicadas."""
+        return [self.coordinates[p * 16:(p + 1) * 16]
+                for p in range(self.n_patches)]
+
+    def center3d(self):
+        """Centro geométrico 3D — média dos pontos de controle."""
+        n = len(self.coordinates)
+        cx = sum(p[0] for p in self.coordinates) / n
+        cy = sum(p[1] for p in self.coordinates) / n
+        cz = sum(p[2] for p in self.coordinates) / n
+        return (cx, cy, cz)
+
+    def center(self):
+        """Projeção 2D do centro (compatibilidade com a interface base)."""
+        cx, cy, cz = self.center3d()
+        return (cx, cy)
+
+    # ── Álgebra de matrizes (locais) ─────────────────────
+    @staticmethod
+    def _mat_mult(a, b):
+        """Multiplica a (m×n) por b (n×p)."""
+        m, n, p = len(a), len(b), len(b[0])
+        result = [[0.0] * p for _ in range(m)]
+        for i in range(m):
+            for k in range(n):
+                aik = a[i][k]
+                if aik == 0:
+                    continue
+                for j in range(p):
+                    result[i][j] += aik * b[k][j]
+        return result
+
+    @staticmethod
+    def _transpose(matrix):
+        return [list(row) for row in zip(*matrix)]
+
+    def _coeff_matrix(self, geometry):
+        """Pré-calcula C = M_B · G · M_B^T para uma coordenada do retalho.
+        Com C pronta, cada ponto da malha custa apenas S · C · T^T."""
+        mb_t = self._transpose(self.M_B)
+        return self._mat_mult(self._mat_mult(self.M_B, geometry), mb_t)
+
+    def _patch_geometry(self, flat_coords, patch_index):
+        """Reconstrói as matrizes de geometria 4x4 (Gx, Gy, Gz) de um
+        retalho a partir das coordenadas 3D achatadas."""
+        base = patch_index * 16
+        pts = flat_coords[base:base + 16]
+        gx = [[pts[r * 4 + c][0] for c in range(4)] for r in range(4)]
+        gy = [[pts[r * 4 + c][1] for c in range(4)] for r in range(4)]
+        gz = [[pts[r * 4 + c][2] for c in range(4)] for r in range(4)]
+        return gx, gy, gz
+
+    @staticmethod
+    def _eval(cx, cy, cz, s, t):
+        """Avalia P(s, t) = S · C · T^T para x, y e z."""
+        s_vec = [s ** 3, s ** 2, s, 1]
+        t_vec = [t ** 3, t ** 2, t, 1]
+
+        def coord(c):
+            v = [sum(s_vec[k] * c[k][j] for k in range(4)) for j in range(4)]
+            return sum(v[j] * t_vec[j] for j in range(4))
+
+        return (coord(cx), coord(cy), coord(cz))
+
+    def _mesh_segments(self, flat_coords):
+        """Gera os segmentos de reta 3D da malha (iso-curvas em s e em t)
+        de todos os retalhos, a partir das coordenadas 3D achatadas."""
+        segments = []
+        steps = self.STEPS
+        for p in range(len(flat_coords) // 16):
+            gx, gy, gz = self._patch_geometry(flat_coords, p)
+            cx = self._coeff_matrix(gx)
+            cy = self._coeff_matrix(gy)
+            cz = self._coeff_matrix(gz)
+
+            grid = []
+            for i in range(steps + 1):
+                s = i / steps
+                row = [self._eval(cx, cy, cz, s, j / steps)
+                       for j in range(steps + 1)]
+                grid.append(row)
+
+            # Iso-curvas em t (liga colunas dentro de cada linha)
+            for i in range(steps + 1):
+                for j in range(steps):
+                    segments.append((grid[i][j], grid[i][j + 1]))
+            # Iso-curvas em s (liga linhas dentro de cada coluna)
+            for j in range(steps + 1):
+                for i in range(steps):
+                    segments.append((grid[i][j], grid[i + 1][j]))
+
+        return segments
+
+    def mesh_view_segments(self):
+        """Segmentos 3D da malha em coordenadas de VIEW, prontos para
+        projeção (paralela ou perspectiva) segmento a segmento."""
+        return self._mesh_segments(self.view_coords)
+
+    def draw_segments(self):
+        """Segmentos 3D da malha em coordenadas do mundo."""
+        return self._mesh_segments(self.coordinates)
+
+    def draw_segments_scn(self):
+        """Não usado: a superfície é projetada em main.py a partir da
+        malha 3D em coordenadas de view (perspectiva-correto). Mantido
+        por completude da interface GraphicObject."""
+        return []
+
+
 class Window(GraphicObject):
     """Window/câmera do sistema. A partir do Trabalho 1.7 é uma câmera
     3D, definida por:

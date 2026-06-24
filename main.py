@@ -2,7 +2,7 @@ import math
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
 from model import (DisplayFile, Window, Point, Line, Wireframe, Curve2D,
-                    BSpline, Point3D, Object3D)
+                    BSpline, Point3D, Object3D, BezierSurface)
 from transform import (scn_to_viewport, apply_transform,
                         compose_matrices, translation_matrix,
                         natural_scaling_matrix, rotation_matrix,
@@ -357,7 +357,55 @@ def redraw():
                     sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
                     canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
 
+        elif obj.object_type == "surface":
+            # Superfície bicúbica de Bézier — a malha 3D (iso-curvas) é
+            # gerada em coordenadas de view e cada segmento é projetado
+            # (com near-plane na perspectiva) e clipado em 2D como linha.
+            line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
+            for a, b in obj.mesh_view_segments():
+                seg = t3d.project_view_segment(a, b, window)
+                if seg is None:
+                    continue
+                (x1, y1), (x2, y2) = seg
+                result = line_clip(x1, y1, x2, y2)
+                if result:
+                    sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
+                    sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
+                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
+
 # ── Add object dialog ────────────────────────────────────
+
+def parse_surface_patches(raw):
+    """Converte o texto da aba Surface em uma lista de retalhos.
+
+    Formato (mesmo padrão dos outros objetos, com as linhas da matriz
+    separadas por ';'): 4 pontos (x,y,z) por linha. Cada grupo de 4
+    linhas (4x4 = 16 pontos) forma um retalho; basta repetir para entrar
+    com mais retalhos. Retorna uma lista de retalhos, cada um com 16
+    tuplas (x, y, z)."""
+    rows = [r.strip() for r in raw.split(";") if r.strip()]
+    parsed_rows = []
+    for r in rows:
+        value = eval(r)
+        # Normaliza uma linha com um único ponto "(x,y,z)" para sequência
+        if value and isinstance(value[0], (int, float)):
+            value = (value,)
+        parsed_rows.append([tuple(float(c) for c in pt) for pt in value])
+
+    if not parsed_rows or len(parsed_rows) % 4 != 0:
+        raise ValueError("o número de linhas deve ser múltiplo de 4")
+    for points in parsed_rows:
+        if len(points) != 4 or any(len(pt) != 3 for pt in points):
+            raise ValueError("cada linha precisa de 4 pontos (x,y,z)")
+
+    patches = []
+    for k in range(0, len(parsed_rows), 4):
+        patch = []
+        for r in range(4):
+            patch.extend(parsed_rows[k + r])
+        patches.append(patch)  # 16 pontos de controle
+    return patches
+
 
 def open_add_object_dialog():
     dialog = tk.Toplevel(root)
@@ -406,6 +454,7 @@ def open_add_object_dialog():
     curve_tab     = tk.Frame(notebook)
     bspline_tab   = tk.Frame(notebook)
     object3d_tab  = tk.Frame(notebook)
+    surface_tab   = tk.Frame(notebook)
 
     notebook.add(point_tab,     text="Point")
     notebook.add(line_tab,      text="Line")
@@ -413,6 +462,7 @@ def open_add_object_dialog():
     notebook.add(curve_tab,     text="Curve")
     notebook.add(bspline_tab,   text="B-Spline")
     notebook.add(object3d_tab,  text="3D Object")
+    notebook.add(surface_tab,   text="Surface")
 
     # Point tab
     tk.Label(point_tab, text="Coordinates:").pack(pady=5)
@@ -465,6 +515,22 @@ def open_add_object_dialog():
     object3d_edges_entry.pack(pady=3)
     tk.Label(object3d_tab,
              text="(o exemplo acima desenha um cubo)").pack()
+
+    # Surface tab — superfície bicúbica de Bézier (16 pontos / retalho)
+    tk.Label(surface_tab, text="Bicubic Bézier Surface (3D)").pack(pady=3)
+    tk.Label(surface_tab,
+             text="Linhas da matriz separadas por ';', 4 pontos (x,y,z) "
+                  "por linha,\n4 linhas (4x4 = 16) por retalho. Repita "
+                  "para mais retalhos.").pack()
+    surface_text = tk.Text(surface_tab, width=52, height=8)
+    surface_text.insert("1.0",
+        "(-150,-150,0),(-50,-150,100),(50,-150,100),(150,-150,0);\n"
+        "(-150,-50,100),(-50,-50,200),(50,-50,200),(150,-50,100);\n"
+        "(-150,50,100),(-50,50,200),(50,50,200),(150,50,100);\n"
+        "(-150,150,0),(-50,150,100),(50,150,100),(150,150,0)")
+    surface_text.pack(pady=3, padx=5)
+    tk.Label(surface_tab,
+             text="(o exemplo acima desenha um retalho em forma de bossa)").pack()
 
     def on_ok():
         name = name_entry.get().strip()
@@ -544,6 +610,10 @@ def open_add_object_dialog():
                 points = [Point3D("", float(v[0]), float(v[1]), float(v[2]))
                           for v in verts]
                 obj = Object3D(name, points, edges)
+
+            elif tab == 6: # Surface (bicubic Bézier)
+                patches = parse_surface_patches(surface_text.get("1.0", tk.END))
+                obj = BezierSurface(name, patches)
         except Exception:
             messagebox.showerror("Invalid input",
                 "Could not parse coordinates. Check the format.", parent=dialog)
@@ -591,7 +661,7 @@ def open_transform_dialog():
         messagebox.showinfo("No selection", "Select an object from the list first.")
         return
 
-    is_3d = obj.object_type in ("object3d", "point3d")
+    is_3d = obj.object_type in ("object3d", "point3d", "surface")
 
     dialog = tk.Toplevel(root)
     dialog.title(f"Transform: {obj}")
