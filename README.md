@@ -17,7 +17,15 @@ transform.py   → Matrizes homogêneas 3x3, transformações 2D, SCN e viewport
 transform3d.py → Matrizes 4x4, transformações 3D e projeções paralela ortogonal e perspectiva
 clipping.py    → Algoritmos de clipping (ponto, retas, polígonos)
 obj_io.py      → Leitura e escrita de .obj 2D (load_obj) e leitura de modelos de arame 3D (load_obj_3d)
+render.py      → Laço de desenho da cena (vetorial ou rasterizado pelo framebuffer)
+framebuffer.py → Framebuffer de software: rasterização, Z-buffer e Phong (Trabalhos 2.1/2.2/2.3)
+phong.py       → Modelo de iluminação de Phong
+sphere.py      → Esfera UV procedural com normais (modelo de teste do shading)
 ```
+
+O pipeline de rasterização (framebuffer, Z-buffer e iluminação de Phong —
+Trabalhos 2.1, 2.2 e 2.3) está documentado em
+[README_PixelShading.md](README_PixelShading.md).
 
 ## Arquitetura
 

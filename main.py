@@ -2,7 +2,10 @@ import math
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
 from model import (DisplayFile, Window, Point, Line, Wireframe, Curve2D,
-                    BSpline, Point3D, Object3D, BezierSurface, BSplineSurface)
+                    BSpline, Point3D, Object3D, BezierSurface, BSplineSurface,
+                    Object3DPhong)
+from phong import LuzPontual, MaterialPhong
+import sphere
 from transform import (scn_to_viewport, apply_transform,
                         compose_matrices, translation_matrix,
                         natural_scaling_matrix, rotation_matrix,
@@ -13,6 +16,7 @@ from obj_io import save_obj, load_obj, load_obj_3d
 from clipping import (clip_point, cohen_sutherland, liang_barsky,
                        sutherland_hodgman, clip_curve,
                        CLIP_MIN, CLIP_MAX)
+from render import render_scene, RenderOptions
 
 window = Window(-300, -300, 300, 300)
 display_file = DisplayFile(window)
@@ -20,14 +24,65 @@ display_file = DisplayFile(window)
 root = tk.Tk()
 root.title("Sistema Gráfico Interativo - INE5420")
 
-# ── Left panel ───────────────────────────────────────────
-panel = tk.Frame(root, width=200, bg="lightgray")
-panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+# ── Left panel (rolável) ─────────────────────────────────
+# O painel esquerdo tem muitas seções (Window, Câmera 3D, Projeção,
+# Clipping, Shading...). Para caberem todas em qualquer resolução, ele
+# fica dentro de um Canvas com barra de rolagem vertical: `panel` é o
+# Frame interno onde todos os controles são empacotados normalmente.
+panel_container = tk.Frame(root, width=270, bg="lightgray")
+panel_container.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+panel_container.pack_propagate(False)  # mantém a largura fixa
+
+panel_canvas = tk.Canvas(panel_container, bg="lightgray",
+                         highlightthickness=0, width=270)
+panel_scroll = tk.Scrollbar(panel_container, orient="vertical",
+                            command=panel_canvas.yview)
+panel_canvas.configure(yscrollcommand=panel_scroll.set)
+panel_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+panel_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+panel = tk.Frame(panel_canvas, bg="lightgray")
+panel_canvas.create_window((0, 0), window=panel, anchor="nw", width=250)
+
+def _update_scrollregion(event):
+    panel_canvas.configure(scrollregion=panel_canvas.bbox("all"))
+
+panel.bind("<Configure>", _update_scrollregion)
+
+def _on_mousewheel(event):
+    # Rolagem com a roda do mouse (Linux usa Button-4/5; outros usam delta)
+    if event.num == 4 or event.delta > 0:
+        panel_canvas.yview_scroll(-1, "units")
+    elif event.num == 5 or event.delta < 0:
+        panel_canvas.yview_scroll(1, "units")
+
+panel_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+panel_canvas.bind_all("<Button-4>", _on_mousewheel)
+panel_canvas.bind_all("<Button-5>", _on_mousewheel)
 
 # Section: object list
 tk.Label(panel, text="Objects", bg="lightgray", anchor="w").pack(fill=tk.X)
 object_listbox = tk.Listbox(panel, height=6)
-object_listbox.pack(fill=tk.X, pady=(0, 10))
+object_listbox.pack(fill=tk.X, pady=(0, 6))
+
+# Object actions — kept right next to the object list. The handlers are
+# defined further down; lambdas defer name lookup to click time.
+obj_actions = tk.Frame(panel, bg="lightgray")
+obj_actions.pack(fill=tk.X, pady=(0, 8))
+tk.Button(obj_actions, text="Add Object",
+          command=lambda: open_add_object_dialog()).pack(fill=tk.X, pady=1)
+tk.Button(obj_actions, text="Delete Object",
+          command=lambda: delete_selected_object()).pack(fill=tk.X, pady=1)
+tk.Button(obj_actions, text="Transform",
+          command=lambda: open_transform_dialog()).pack(fill=tk.X, pady=1)
+obj_io_row = tk.Frame(obj_actions, bg="lightgray")
+obj_io_row.pack(fill=tk.X, pady=1)
+tk.Button(obj_io_row, text="Save .obj",
+          command=lambda: do_save_obj()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+tk.Button(obj_io_row, text="Load .obj",
+          command=lambda: do_load_obj()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+tk.Button(obj_actions, text="Load 3D .obj (wireframe)",
+          command=lambda: do_load_obj_3d()).pack(fill=tk.X, pady=1)
 
 # Section: Window controls
 window_frame = tk.LabelFrame(panel, text="Window", bg="lightgray")
@@ -221,160 +276,119 @@ tk.Radiobutton(clip_frame, text="Liang-Barsky", variable=clip_algorithm,
                value="liang-barsky", bg="lightgray",
                command=lambda: redraw()).pack(anchor="w")
 
+# Section: Rasterization / Shading (Trabalhos 2.1, 2.2, 2.3)
+shading_frame = tk.LabelFrame(panel, text="Rasterization/Shading", bg="lightgray")
+shading_frame.pack(fill=tk.X, pady=5)
+
+# Render mode — the stages are a PIPELINE (each needs the previous one:
+# Phong needs Z-buffer, which needs Framebuffer), so they are mutually
+# exclusive: a mode selector, not independent checkboxes.
+render_mode = tk.StringVar(value="vector")
+for text, value in [("Vector", "vector"),
+                    ("Framebuffer (wireframe)", "framebuffer"),
+                    ("Z-buffer (solid)", "zbuffer"),
+                    ("Phong shading", "phong")]:
+    tk.Radiobutton(shading_frame, text=text, variable=render_mode,
+                   value=value, bg="lightgray",
+                   command=lambda: redraw()).pack(anchor="w")
+
+def _labeled_row(parent, label, defaults):
+    """Builds a 'label: [entry][entry]...' row and returns the Entries.
+    Editing a field and pressing Enter (or leaving it) redraws."""
+    row = tk.Frame(parent, bg="lightgray")
+    row.pack(fill=tk.X, padx=3, pady=1)
+    tk.Label(row, text=label, bg="lightgray", width=13,
+             anchor="w").pack(side=tk.LEFT)
+    entries = []
+    for d in defaults:
+        e = tk.Entry(row, width=5)
+        e.insert(0, str(d))
+        e.pack(side=tk.LEFT, padx=1)
+        e.bind("<Return>", lambda ev: redraw())
+        e.bind("<FocusOut>", lambda ev: redraw())
+        entries.append(e)
+    return entries
+
+# Light position (world) and Phong material coefficients.
+# Ka/Kd/Ks are MATERIAL coefficients (0 to 1); n is the specular
+# exponent / shininess (1 to ~256).
+light_entries = _labeled_row(shading_frame, "Light X Y Z", [0, 0, 400])
+ka_entry, = _labeled_row(shading_frame, "Ambient (Ka)", [0.2])
+kd_entry, = _labeled_row(shading_frame, "Diffuse (Kd)", [0.7])
+ks_entry, = _labeled_row(shading_frame, "Specular (Ks)", [0.5])
+shininess_entry, = _labeled_row(shading_frame, "Shininess (n)", [32])
+
+def load_sphere():
+    """Carrega uma esfera procedural (Object3DPhong) À FRENTE da câmera,
+    com a luz posicionada para iluminar a face visível.
+
+    Colocar a esfera na frente (VRP + VPN·d) evita o caso degenerado de a
+    câmera ficar dentro dela, e a luz perto da câmera (deslocada para
+    cima-direita) garante que a face que vemos já apareça iluminada."""
+    vrp = window.vrp
+    n = t3d.normalize(window.vpn)      # direção de visão
+    right = window._view_right()        # direita da câmera
+    up = t3d.normalize(window.vup)      # cima da câmera
+    d = 400.0
+    center = (vrp[0] + n[0] * d, vrp[1] + n[1] * d, vrp[2] + n[2] * d)
+    tris = sphere.get_sphere_triangles(radius=120.0, stacks=16, slices=16,
+                                       center=center)
+    obj = Object3DPhong(f"esfera{len(display_file._objects)}", tris,
+                        color="#cc5544")
+    display_file.add(obj)
+    object_listbox.insert(tk.END, str(obj))
+
+    # Luz perto da câmera, deslocada para cima-direita
+    lp = (vrp[0] + right[0] * 250 + up[0] * 200,
+          vrp[1] + right[1] * 250 + up[1] * 200,
+          vrp[2] + right[2] * 250 + up[2] * 200)
+    for e, val in zip(light_entries, lp):
+        e.delete(0, tk.END)
+        e.insert(0, f"{val:.0f}")
+
+    render_mode.set("phong")  # já mostra a esfera iluminada
+    redraw()
+
+tk.Button(shading_frame, text="Load Sphere",
+          command=load_sphere).pack(fill=tk.X, padx=3, pady=3)
+
 # ── Canvas (viewport) ────────────────────────────────────
 canvas = tk.Canvas(root, width=800, height=800, bg="white",
                    highlightthickness=1, highlightbackground="gray")
 canvas.pack(side=tk.LEFT, padx=10, pady=10)
 
+def build_render_options():
+    """Traduz o modo de renderização escolhido na UI para as flags do
+    pipeline. Os modos são cumulativos: cada um liga o estágio anterior."""
+    mode = render_mode.get()
+    use_fb = mode in ("framebuffer", "zbuffer", "phong")
+    use_zbuffer = mode in ("zbuffer", "phong")
+    use_phong = mode == "phong"
+
+    light = material = None
+    if use_phong:
+        try:
+            lx, ly, lz = (float(e.get()) for e in light_entries)
+            ka = float(ka_entry.get())
+            kd = float(kd_entry.get())
+            ks = float(ks_entry.get())
+            shine = float(shininess_entry.get())
+            light = LuzPontual(posicao=(lx, ly, lz))
+            material = MaterialPhong(ka=(ka, ka, ka), kd=(kd, kd, kd),
+                                     ks=(ks, ks, ks), shininess=shine)
+        except ValueError:
+            use_phong = False  # campos inválidos: desliga Phong sem quebrar
+
+    return RenderOptions(use_framebuffer=use_fb, use_zbuffer=use_zbuffer,
+                         use_phong=use_phong, light=light, material=material)
+
 def redraw():
-    canvas.delete("all")
+    """Redesenha a cena inteira. Chamado após qualquer mudança de
+    estado (transformação, navegação da câmera, adicionar/remover
+    objeto). O laço de desenho em si vive em render.py."""
+    render_scene(canvas, display_file, window, clip_algorithm.get(),
+                 build_render_options())
 
-    # Projeção (paralela ortogonal ou em perspectiva): recalcula as
-    # coordenadas SCN de todos os objetos (2D e 3D) a partir da
-    # câmera 3D (window).
-    display_file.project(window)
-
-    # O viewport mapeia o SCN inteiro [-1, 1] para o canvas inteiro.
-    # A moldura vermelha mostra visualmente onde o clipping corta
-    # (em [-0.90, 0.90] no SCN), servindo como ferramenta de debug.
-    cw = canvas.winfo_width()
-    ch = canvas.winfo_height()
-    if cw <= 1:
-        cw = canvas.winfo_reqwidth()
-    if ch <= 1:
-        ch = canvas.winfo_reqheight()
-    vp = (0, 0, cw, ch)
-
-    # Desenhar moldura vermelha na posição correspondente ao clipping
-    # CLIP_MIN/MAX em SCN mapeados para pixels
-    mx1, my1 = scn_to_viewport(CLIP_MIN, CLIP_MAX, vp)  # top-left
-    mx2, my2 = scn_to_viewport(CLIP_MAX, CLIP_MIN, vp)  # bottom-right
-    canvas.create_rectangle(mx1, my1, mx2, my2,
-                            outline="red", width=2)
-
-    algo = clip_algorithm.get()
-
-    for obj in display_file.drawable_objects():
-        color = obj.color
-
-        if obj.object_type == "point":
-            if obj.normalized_coords and obj.normalized_coords[0] is not None:
-                x, y = obj.normalized_coords[0]
-                # Clipagem de pontos
-                if clip_point(x, y):
-                    sx, sy = scn_to_viewport(x, y, vp)
-                    canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
-                                       fill=color, outline=color)
-
-        elif obj.object_type == "line":
-            if (len(obj.normalized_coords) >= 2
-                    and obj.normalized_coords[0] is not None
-                    and obj.normalized_coords[1] is not None):
-                x1, y1 = obj.normalized_coords[0]
-                x2, y2 = obj.normalized_coords[1]
-                # Clipagem de retas — algoritmo selecionado pelo usuário
-                if algo == "cohen-sutherland":
-                    result = cohen_sutherland(x1, y1, x2, y2)
-                else:
-                    result = liang_barsky(x1, y1, x2, y2)
-                if result:
-                    sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
-                    sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
-                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
-
-        elif obj.object_type in ("curve", "bspline"):
-            # Clipagem de curvas (Bézier e B-Spline) — point clipping
-            # em cada amostra discretizada.
-            # Trechos contíguos visíveis viram linhas conectadas.
-            if any(c is None for c in obj.normalized_coords):
-                segments = []  # ponto de controle atrás do COP
-            else:
-                segments = clip_curve(obj.curve_points_scn())
-            for seg in segments:
-                for i in range(len(seg) - 1):
-                    sx1, sy1 = scn_to_viewport(seg[i][0], seg[i][1], vp)
-                    sx2, sy2 = scn_to_viewport(seg[i+1][0], seg[i+1][1], vp)
-                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
-
-        elif obj.object_type == "wireframe":
-            if obj.filled:
-                # Polígono preenchido — Sutherland-Hodgman (precisa fechar)
-                if any(c is None for c in obj.normalized_coords):
-                    clipped = []  # vértice atrás do COP
-                else:
-                    clipped = sutherland_hodgman(obj.normalized_coords)
-                if clipped:
-                    vp_points = [scn_to_viewport(x, y, vp) for x, y in clipped]
-                    if len(vp_points) >= 3:
-                        flat = []
-                        for px, py in vp_points:
-                            flat.extend([px, py])
-                        canvas.create_polygon(*flat, fill=color,
-                                              outline=color)
-            else:
-                # Wireframe — clipa cada aresta individualmente como linha
-                line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
-                coords = obj.normalized_coords
-                for i in range(len(coords)):
-                    p1 = coords[i]
-                    p2 = coords[(i + 1) % len(coords)]
-                    if p1 is None or p2 is None:
-                        continue  # vértice atrás do COP
-                    x1, y1 = p1
-                    x2, y2 = p2
-                    result = line_clip(x1, y1, x2, y2)
-                    if result:
-                        sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
-                        sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
-                        canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
-
-        elif obj.object_type == "point3d":
-            # Ponto 3D — já projetado para SCN; clipagem de ponto.
-            # normalized_coords[0] pode ser None se estiver atrás do COP.
-            if obj.normalized_coords and obj.normalized_coords[0] is not None:
-                x, y = obj.normalized_coords[0]
-                if clip_point(x, y):
-                    sx, sy = scn_to_viewport(x, y, vp)
-                    canvas.create_oval(sx - 2, sy - 2, sx + 2, sy + 2,
-                                       fill=color, outline=color)
-
-        elif obj.object_type == "object3d":
-            # Objeto 3D — cada segmento de reta é projetado a partir das
-            # coordenadas de view (com clipping de near-plane na
-            # perspectiva) e depois clipado em 2D como linha.
-            line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
-            vc = obj.view_coords
-            for i, j in obj.segments:
-                if i >= len(vc) or j >= len(vc):
-                    continue
-                seg = t3d.project_view_segment(vc[i], vc[j], window)
-                if seg is None:
-                    continue
-                (x1, y1), (x2, y2) = seg
-                result = line_clip(x1, y1, x2, y2)
-                if result:
-                    sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
-                    sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
-                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
-
-        elif obj.object_type in ("surface", "bsurface"):
-            # Superfície bicúbica (Bézier 1.9 ou B-Spline por forward
-            # differences 1.10) — a malha 3D (iso-curvas) é gerada em
-            # coordenadas de view e cada segmento é projetado (com
-            # near-plane na perspectiva) e clipado em 2D como linha.
-            line_clip = cohen_sutherland if algo == "cohen-sutherland" else liang_barsky
-            for a, b in obj.mesh_view_segments():
-                seg = t3d.project_view_segment(a, b, window)
-                if seg is None:
-                    continue
-                (x1, y1), (x2, y2) = seg
-                result = line_clip(x1, y1, x2, y2)
-                if result:
-                    sx1, sy1 = scn_to_viewport(result[0], result[1], vp)
-                    sx2, sy2 = scn_to_viewport(result[2], result[3], vp)
-                    canvas.create_line(sx1, sy1, sx2, sy2, fill=color)
-
-# ── Add object dialog ────────────────────────────────────
 
 def parse_surface_patches(raw):
     """Converte o texto da aba Surface em uma lista de retalhos.
@@ -680,8 +694,6 @@ def open_add_object_dialog():
     tk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
     tk.Button(button_frame, text="OK", command=on_ok).pack(side=tk.RIGHT)
 
-tk.Button(panel, text="Add Object", command=open_add_object_dialog).pack(fill=tk.X, pady=2)
-
 def delete_selected_object():
     selection = object_listbox.curselection()
     if not selection:
@@ -691,8 +703,6 @@ def delete_selected_object():
     display_file.remove(name)
     object_listbox.delete(index)
     redraw()
-
-tk.Button(panel, text="Delete Object", command=delete_selected_object).pack(fill=tk.X, pady=2)
 
 # ── Transform dialog ─────────────────────────────────────
 
@@ -710,7 +720,8 @@ def open_transform_dialog():
         messagebox.showinfo("No selection", "Select an object from the list first.")
         return
 
-    is_3d = obj.object_type in ("object3d", "point3d", "surface", "bsurface")
+    is_3d = obj.object_type in ("object3d", "point3d", "surface",
+                                "bsurface", "phong")
 
     dialog = tk.Toplevel(root)
     dialog.title(f"Transform: {obj}")
@@ -918,8 +929,6 @@ def open_transform_dialog():
     tk.Button(bottom_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
     tk.Button(bottom_frame, text="Apply", command=apply_transforms).pack(side=tk.RIGHT)
 
-tk.Button(panel, text="Transform", command=open_transform_dialog).pack(fill=tk.X, pady=2)
-
 # ── OBJ import/export ────────────────────────────────────
 
 def do_save_obj():
@@ -973,13 +982,6 @@ def do_load_obj_3d():
             redraw()
         except Exception as e:
             messagebox.showerror("Error", str(e))
-
-obj_frame = tk.Frame(panel, bg="lightgray")
-obj_frame.pack(fill=tk.X, pady=5)
-tk.Button(obj_frame, text="Save .obj", command=do_save_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-tk.Button(obj_frame, text="Load .obj", command=do_load_obj).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-tk.Button(panel, text="Load 3D .obj (wireframe)",
-          command=do_load_obj_3d).pack(fill=tk.X, pady=2)
 
 # Forçar o layout do Tkinter antes do primeiro redraw
 root.update_idletasks()

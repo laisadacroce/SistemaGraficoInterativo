@@ -433,6 +433,62 @@ class Object3D(GraphicObject):
         return result
 
 
+class Object3DPhong(GraphicObject):
+    """Objeto 3D feito de triângulos com normais por vértice, para
+    iluminação de Phong — Trabalho 2.3.
+
+    Cada triângulo tem 3 vértices e 3 normais (uma por vértice). Guardamos
+    tudo achatado, 3 entradas por triângulo, em ordem: `coordinates` são
+    os vértices (herdado de GraphicObject, então a projeção do DisplayFile
+    já calcula view_coords/normalized_coords automaticamente) e `normals`
+    são as normais alinhadas na mesma ordem. É desenhado pela rasterização
+    por software (framebuffer); não aparece no modo vetorial puro."""
+
+    def __init__(self, name, triangulos, color="#888888", drawable=True):
+        # triangulos: lista de {'v': [(x,y,z)x3], 'n': [(nx,ny,nz)x3]}
+        coords = []
+        normals = []
+        for tri in triangulos:
+            for v in tri["v"]:
+                coords.append((float(v[0]), float(v[1]), float(v[2])))
+            for nrm in tri["n"]:
+                normals.append((float(nrm[0]), float(nrm[1]), float(nrm[2])))
+        super().__init__(name, coords, drawable, color)
+        self.normals = normals
+
+    @property
+    def object_type(self):
+        return "phong"
+
+    @property
+    def n_triangles(self):
+        return len(self.coordinates) // 3
+
+    def center3d(self):
+        n = len(self.coordinates)
+        cx = sum(p[0] for p in self.coordinates) / n
+        cy = sum(p[1] for p in self.coordinates) / n
+        cz = sum(p[2] for p in self.coordinates) / n
+        return (cx, cy, cz)
+
+    def center(self):
+        cx, cy, cz = self.center3d()
+        return (cx, cy)
+
+    def draw_segments(self):
+        """Arestas dos triângulos (usado só no fallback wireframe)."""
+        segs = []
+        for t in range(self.n_triangles):
+            a = self.coordinates[3 * t]
+            b = self.coordinates[3 * t + 1]
+            c = self.coordinates[3 * t + 2]
+            segs.extend([(a, b), (b, c), (c, a)])
+        return segs
+
+    def draw_segments_scn(self):
+        return []
+
+
 class BezierSurface(GraphicObject):
     """Superfície bicúbica de Bézier 3D — Trabalho 1.9.
 
